@@ -4,8 +4,24 @@ Chess for people waiting on AI agents.
 
 Machiai is a floating chess overlay for Codex, Claude, Cursor, and other coding agents. Open the square window, keep it beside your agent app, and play 3+0 chess only while an agent is running.
 
+## One Command
+
+For public friend testing before the npm package is live, run one command with the shared server URL:
+
 ```bash
-npx -y @aizakmi08/machiai app
+curl -fsSL https://raw.githubusercontent.com/aizakmi08/machiai/main/scripts/quickstart.sh | bash -s -- https://your-public-server.example
+```
+
+That installs/updates Machiai under `~/.machiai/source`, opens the overlay, and starts a temporary 5-minute wait session so rated chess is unlocked. To wrap a real agent command:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/aizakmi08/machiai/main/scripts/quickstart.sh | bash -s -- https://your-public-server.example codex exec "build the feature"
+```
+
+After npm publish and hosted server deploy, the public command becomes:
+
+```bash
+npx -y @aizakmi08/machiai run --overlay -- codex exec "build the feature"
 ```
 
 The most reliable unlock path is still wrapping the agent command:

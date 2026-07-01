@@ -15,7 +15,8 @@
     "README.md",
     "LICENSE",
     "docs",
-    "examples"
+    "examples",
+    "scripts"
   ],
   "scripts": {
     "build": "tsc && pnpm overlay:build",
