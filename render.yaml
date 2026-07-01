@@ -3,7 +3,7 @@ services:
     name: machiai-aizakmi08
     runtime: node
     plan: free
-    buildCommand: corepack enable && pnpm install --frozen-lockfile --no-optional && pnpm build
+    buildCommand: corepack enable && rm -rf node_modules && pnpm install --frozen-lockfile && pnpm build
     startCommand: node dist/apps/server/src/main.js
     healthCheckPath: /health
     envVars:
