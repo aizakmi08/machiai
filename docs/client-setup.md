@@ -1,15 +1,29 @@
 # Client Setup
 
-## One Command Before npm Publish
+## One Command
+
+```bash
+npx -y @aizakmi08/machiai run --overlay -- codex exec "build the feature"
+```
+
+Or open the overlay first:
+
+```bash
+npx -y @aizakmi08/machiai app
+```
+
+These commands use the default hosted server at `https://machiai-aizakmi08.fly.dev`.
+
+## GitHub Quickstart Before npm Publish
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/aizakmi08/machiai/main/scripts/quickstart.sh | bash -s --
+```
+
+With a temporary shared server URL:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/aizakmi08/machiai/main/scripts/quickstart.sh | bash -s -- https://your-public-server.example
-```
-
-With a real agent command:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/aizakmi08/machiai/main/scripts/quickstart.sh | bash -s -- https://your-public-server.example codex exec "build the feature"
 ```
 
 The quickstart script requires Git and Node 20+. It installs/updates Machiai in `~/.machiai/source`, builds the overlay, and launches `machiai run --overlay`.

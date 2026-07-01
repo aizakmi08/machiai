@@ -1,4 +1,4 @@
-export const DEFAULT_SERVER_URL = "https://machiai.fly.dev";
+export const DEFAULT_SERVER_URL = "https://machiai-aizakmi08.fly.dev";
 
 export function serverUrl(): string {
   return process.env.MACHIAI_SERVER_URL ?? DEFAULT_SERVER_URL;

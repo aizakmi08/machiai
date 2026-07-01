@@ -3,7 +3,7 @@ set -euo pipefail
 
 REPO_URL="${MACHIAI_REPO_URL:-https://github.com/aizakmi08/machiai.git}"
 INSTALL_DIR="${MACHIAI_SOURCE_DIR:-$HOME/.machiai/source}"
-DEFAULT_SERVER_URL="${MACHIAI_SERVER_URL:-https://machiai.fly.dev}"
+DEFAULT_SERVER_URL="${MACHIAI_SERVER_URL:-https://machiai-aizakmi08.fly.dev}"
 SERVER_URL="$DEFAULT_SERVER_URL"
 
 if [[ $# -gt 0 && "$1" =~ ^https?:// ]]; then

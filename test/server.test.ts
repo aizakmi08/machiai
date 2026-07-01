@@ -104,6 +104,20 @@ test("presence counts unique online players", async () => {
   await server.stop();
 });
 
+test("public HTTP endpoints expose server status", async () => {
+  const { server, url } = await startTestServer();
+  const root = await fetch(new URL("/", url));
+  const health = await fetch(new URL("/health", url));
+  const presence = await fetch(new URL("/presence", url));
+  assert.equal(root.status, 200);
+  assert.equal(health.status, 200);
+  assert.equal(presence.status, 200);
+  assert.equal(((await root.json()) as { service: string }).service, "machiai");
+  assert.equal(((await health.json()) as { ok: boolean }).ok, true);
+  assert.equal(((await presence.json()) as PresenceState).onlinePlayers, 0);
+  await server.stop();
+});
+
 test("default store persists players across reopen", async () => {
   const dir = mkdtempSync(join(tmpdir(), "machiai-store-"));
   const storePath = join(dir, "server-store.sqlite");

@@ -6,23 +6,25 @@ Machiai is a floating chess overlay for Codex, Claude, Cursor, and other coding 
 
 ## One Command
 
-For public friend testing before the npm package is live, run one command with the shared server URL:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/aizakmi08/machiai/main/scripts/quickstart.sh | bash -s -- https://your-public-server.example
-```
-
-That installs/updates Machiai under `~/.machiai/source`, opens the overlay, and starts a temporary 5-minute wait session so rated chess is unlocked. To wrap a real agent command:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/aizakmi08/machiai/main/scripts/quickstart.sh | bash -s -- https://your-public-server.example codex exec "build the feature"
-```
-
-After npm publish and hosted server deploy, the public command becomes:
+Final public setup:
 
 ```bash
 npx -y @aizakmi08/machiai run --overlay -- codex exec "build the feature"
 ```
+
+Or open the overlay first:
+
+```bash
+npx -y @aizakmi08/machiai app
+```
+
+Before npm publish, use the GitHub quickstart fallback:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/aizakmi08/machiai/main/scripts/quickstart.sh | bash -s --
+```
+
+That installs/updates Machiai under `~/.machiai/source`, opens the overlay, and starts a temporary 5-minute wait session so rated chess is unlocked.
 
 The most reliable unlock path is still wrapping the agent command:
 
@@ -106,19 +108,19 @@ MACHIAI_STORE=.machiai/server-store.sqlite machiai server
 
 ## Friend Test
 
-Run one shared Machiai server, expose it with any HTTPS tunnel, then both players open the overlay against that URL:
+After the hosted server is deployed and npm is published, both players use the normal command:
 
 ```bash
-machiai app --dev-server https://your-public-server.example
+npx -y @aizakmi08/machiai run --overlay -- codex exec "build the feature"
 ```
 
-Rated queue still unlocks only while an agent is active. The reliable test path is:
+For temporary pre-launch testing, pass a shared server URL to the GitHub quickstart:
 
 ```bash
-MACHIAI_SERVER_URL=https://your-public-server.example machiai run --overlay -- codex exec "build the feature"
+curl -fsSL https://raw.githubusercontent.com/aizakmi08/machiai/main/scripts/quickstart.sh | bash -s -- https://your-public-server.example
 ```
 
-Your friend uses the same `MACHIAI_SERVER_URL`. The overlay shows the live online count in the top-right corner after both clients connect.
+The overlay shows the live online count in the top-right corner after both clients connect.
 
 ## Rating
 

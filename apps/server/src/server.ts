@@ -316,6 +316,16 @@ export class MachiaiServer {
   }
 
   private async handleHttp(url: string, res: import("node:http").ServerResponse): Promise<void> {
+    if (url === "/" || url.startsWith("/?")) {
+      return this.json(res, {
+        ok: true,
+        service: "machiai",
+        tagline: "Chess for people waiting on AI agents.",
+        health: "/health",
+        presence: "/presence",
+        leaderboard: "/leaderboard",
+      });
+    }
     if (url.startsWith("/health")) {
       return this.json(res, { ok: true, service: "machiai", now: new Date().toISOString() });
     }
