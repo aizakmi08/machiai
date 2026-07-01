@@ -1,0 +1,74 @@
+{
+  "name": "@aizakmi08/machiai",
+  "version": "0.1.0",
+  "description": "Chess for people waiting on AI agents.",
+  "type": "module",
+  "license": "MIT",
+  "private": false,
+  "bin": {
+    "machiai": "./dist/packages/cli/src/cli.js",
+    "machiai-mcp": "./dist/packages/cli/src/mcp.js"
+  },
+  "files": [
+    "dist/apps",
+    "dist/packages",
+    "README.md",
+    "LICENSE",
+    "docs",
+    "examples"
+  ],
+  "scripts": {
+    "build": "tsc && pnpm overlay:build",
+    "check": "tsc --noEmit",
+    "dev": "tsx packages/cli/src/cli.ts",
+    "app": "pnpm build && node dist/packages/cli/src/cli.js app",
+    "overlay:build": "vite build --config apps/overlay/vite.config.ts",
+    "server": "tsx apps/server/src/main.ts",
+    "demo": "tsx packages/cli/src/cli.ts demo",
+    "serve": "tsx packages/cli/src/mcp.ts",
+    "test": "node --test dist/test/*.test.js",
+    "test:build": "pnpm build && pnpm test",
+    "smoke": "pnpm build && node dist/packages/cli/src/cli.js demo && MACHIAI_HOME=/tmp/machiai-smoke node dist/packages/cli/src/cli.js profile && node dist/packages/cli/src/cli.js mcp-config && node dist/packages/cli/src/cli.js app --smoke",
+    "pack:dry": "pnpm pack --pack-destination /tmp",
+    "prepack": "pnpm build",
+    "release:check": "pnpm check && pnpm test:build && pnpm smoke && pnpm publish --dry-run --access public --no-git-checks && pnpm pack:dry"
+  },
+  "keywords": [
+    "ai-agents",
+    "coding-agents",
+    "codex",
+    "claude",
+    "chess",
+    "terminal",
+    "mcp",
+    "multiplayer"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.17.5",
+    "chess.js": "^1.4.0",
+    "electron": "^43.0.0",
+    "ink": "^5.2.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "socket.io": "^4.8.1",
+    "socket.io-client": "^4.8.1",
+    "zod": "^3.25.76"
+  },
+  "optionalDependencies": {
+    "node-pty": "^1.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.14",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.7",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2",
+    "vite": "^8.1.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.machiai/
+.agent-preflight/
+.env
+.npmrc
+*.tgz
+*.log

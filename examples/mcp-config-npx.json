@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "machiai": {
+      "command": "npx",
+      "args": ["-y", "@aizakmi08/machiai", "serve"]
+    }
+  }
+}

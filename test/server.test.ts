@@ -1,0 +1,129 @@
+import assert from "node:assert/strict";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+import { io, type Socket } from "socket.io-client";
+import { MachiaiServer } from "../apps/server/src/server.js";
+import { createStore, JsonFileStore } from "../apps/server/src/store.js";
+import { createDeviceKey, createId, STARTING_MMR, type GameState, type PlayerProfile } from "../packages/shared/src/index.js";
+
+test("two clients match, finish a rated game, and receive rating updates", async () => {
+  const { server, url } = await startTestServer();
+  const alice = player("alice");
+  const bob = player("bob");
+  const a = await client(url, alice);
+  const b = await client(url, bob);
+  await emitAck(a, "wait.heartbeat", { sessionId: "wait-a", agent: "codex", active: true });
+  await emitAck(b, "wait.heartbeat", { sessionId: "wait-b", agent: "claude", active: true });
+  const started = onceSocket<GameState>(a, "game.started");
+  await emitAck(a, "queue.join", { sessionId: "wait-a" });
+  await emitAck(b, "queue.join", { sessionId: "wait-b" });
+  const game = await started;
+  const whiteSocket = game.whitePlayerId === alice.playerId ? a : b;
+  const blackSocket = game.blackPlayerId === alice.playerId ? a : b;
+  const rating = onceSocket<{ rating: { delta: number } }>(whiteSocket, "rating.updated");
+  let next = (await emitAck(whiteSocket, "game.move", { gameId: game.gameId, move: "e2e4" })) as { game: GameState };
+  next = (await emitAck(blackSocket, "game.move", { gameId: game.gameId, move: "e7e5" })) as { game: GameState };
+  assert.equal(next.game.bothPlayersMoved, true);
+  await emitAck(blackSocket, "game.resign", { gameId: game.gameId });
+  const ratingPayload = await rating;
+  assert.notEqual(ratingPayload.rating.delta, 0);
+  a.disconnect();
+  b.disconnect();
+  await server.stop();
+});
+
+test("agent completion locks the next queue but does not pause current game", async () => {
+  const { server, url } = await startTestServer();
+  const alice = player("alice");
+  const bob = player("bob");
+  const a = await client(url, alice);
+  const b = await client(url, bob);
+  await emitAck(a, "wait.heartbeat", { sessionId: "wait-a", agent: "codex", active: true });
+  await emitAck(b, "wait.heartbeat", { sessionId: "wait-b", agent: "claude", active: true });
+  const started = onceSocket<GameState>(a, "game.started");
+  await emitAck(a, "queue.join", { sessionId: "wait-a" });
+  await emitAck(b, "queue.join", { sessionId: "wait-b" });
+  const game = await started;
+  await emitAck(a, "wait.heartbeat", { sessionId: "wait-a", active: false });
+  const whiteSocket = game.whitePlayerId === alice.playerId ? a : b;
+  const response = (await emitAck(whiteSocket, "game.move", { gameId: game.gameId, move: "e2e4" })) as { game: GameState };
+  assert.equal(response.game.moves.length, 1);
+  await assert.rejects(() => emitAck(a, "queue.join", { sessionId: "wait-a" }), /Rated queue is locked/);
+  a.disconnect();
+  b.disconnect();
+  await server.stop();
+});
+
+test("bot fallback starts an unrated game when lobby is empty", async () => {
+  const { server, url } = await startTestServer({ botFallbackMs: 20 });
+  const alice = player("alice");
+  const a = await client(url, alice);
+  await emitAck(a, "wait.heartbeat", { sessionId: "wait-a", agent: "codex", active: true });
+  const started = onceSocket<GameState>(a, "game.started");
+  await emitAck(a, "queue.join", { sessionId: "wait-a" });
+  const game = await started;
+  assert.equal(game.mode, "bot");
+  assert.equal(game.rated, false);
+  const response = (await emitAck(a, "game.move", { gameId: game.gameId, move: "e2e4" })) as { game: GameState };
+  assert.equal(response.game.moves.length, 2);
+  a.disconnect();
+  await server.stop();
+});
+
+test("default store persists players across reopen", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "machiai-store-"));
+  const storePath = join(dir, "server-store.sqlite");
+  const store = await createStore(storePath);
+  const alice = player("alice");
+  await store.upsertPlayer(alice);
+  await store.close();
+
+  const reopened = await createStore(storePath);
+  const saved = await reopened.getPlayer(alice.playerId);
+  assert.equal(saved?.mmr, STARTING_MMR);
+  assert.equal(saved?.handle, "alice");
+  await reopened.close();
+});
+
+async function startTestServer(options: { botFallbackMs?: number } = {}) {
+  const server = new MachiaiServer({ store: new JsonFileStore(), botFallbackMs: options.botFallbackMs ?? 1000, reconnectGraceMs: 20 });
+  const url = await server.start(0);
+  return { server, url };
+}
+
+function player(displayName: string): PlayerProfile {
+  const now = new Date().toISOString();
+  return {
+    playerId: createId(displayName),
+    deviceKey: createDeviceKey(),
+    handle: displayName,
+    displayName,
+    mmr: STARTING_MMR,
+    ratedGames: 0,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+async function client(url: string, profile: PlayerProfile): Promise<Socket> {
+  const socket = io(url, { transports: ["websocket", "polling"] });
+  await onceSocket(socket, "connect");
+  await emitAck(socket, "auth.anonymous", profile);
+  return socket;
+}
+
+function emitAck(socket: Socket, event: string, payload: unknown): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    socket.timeout(3000).emit(event, payload, (error: Error | null, response: { ok?: boolean; error?: { message: string } }) => {
+      if (error) reject(error);
+      else if (response?.ok === false) reject(new Error(response.error?.message ?? `${event} failed`));
+      else resolve(response);
+    });
+  });
+}
+
+function onceSocket<T = unknown>(socket: Socket, event: string): Promise<T> {
+  return new Promise((resolve) => socket.once(event, resolve as (...args: unknown[]) => void));
+}
