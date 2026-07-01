@@ -115,6 +115,11 @@ export interface MachiaiError {
   message: string;
 }
 
+export interface PresenceState {
+  onlinePlayers: number;
+  updatedAt: string;
+}
+
 export const STARTING_MMR = 500;
 export const BLITZ_CLOCK_MS = 3 * 60 * 1000;
 export const RECONNECT_GRACE_MS = 30 * 1000;

@@ -19,6 +19,17 @@ node dist/packages/cli/src/cli.js app --dev-server http://127.0.0.1:4137
 MACHIAI_SERVER_URL=http://127.0.0.1:4137 node dist/packages/cli/src/cli.js run --overlay -- node examples/fake-agent.js
 ```
 
+## Friend Test
+
+Start one shared server and point both overlays at it:
+
+```bash
+machiai app --dev-server https://your-public-server.example
+MACHIAI_SERVER_URL=https://your-public-server.example machiai run --overlay -- codex exec "build the feature"
+```
+
+The public URL can come from a hosted Machiai server or a temporary tunnel to `machiai server --port 4137`. Both players must use the same server URL.
+
 ## MCP Config
 
 ```bash

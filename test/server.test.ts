@@ -6,7 +6,7 @@ import test from "node:test";
 import { io, type Socket } from "socket.io-client";
 import { MachiaiServer } from "../apps/server/src/server.js";
 import { createStore, JsonFileStore } from "../apps/server/src/store.js";
-import { createDeviceKey, createId, STARTING_MMR, type GameState, type PlayerProfile } from "../packages/shared/src/index.js";
+import { createDeviceKey, createId, STARTING_MMR, type GameState, type PlayerProfile, type PresenceState } from "../packages/shared/src/index.js";
 
 test("two clients match, finish a rated game, and receive rating updates", async () => {
   const { server, url } = await startTestServer();
@@ -72,6 +72,38 @@ test("bot fallback starts an unrated game when lobby is empty", async () => {
   await server.stop();
 });
 
+test("presence counts unique online players", async () => {
+  const { server, url } = await startTestServer();
+  const alice = player("alice");
+  const bob = player("bob");
+  const a = io(url, { transports: ["websocket", "polling"] });
+  const aSecondWindow = io(url, { transports: ["websocket", "polling"] });
+  const b = io(url, { transports: ["websocket", "polling"] });
+  await Promise.all([onceSocket(a, "connect"), onceSocket(aSecondWindow, "connect"), onceSocket(b, "connect")]);
+
+  const aliceOnline = onceSocket<PresenceState>(a, "presence.updated");
+  await emitAck(a, "auth.anonymous", alice);
+  assert.equal((await aliceOnline).onlinePlayers, 1);
+
+  const bobOnline = onceSocket<PresenceState>(a, "presence.updated");
+  await emitAck(b, "auth.anonymous", bob);
+  assert.equal((await bobOnline).onlinePlayers, 2);
+
+  const duplicateWindow = onceSocket<PresenceState>(a, "presence.updated");
+  await emitAck(aSecondWindow, "auth.anonymous", alice);
+  assert.equal((await duplicateWindow).onlinePlayers, 2);
+
+  const bobOffline = onceSocket<PresenceState>(a, "presence.updated");
+  b.disconnect();
+  assert.equal((await bobOffline).onlinePlayers, 1);
+
+  a.disconnect();
+  aSecondWindow.disconnect();
+  const emptyPresence = await waitForPresence(url, 0);
+  assert.equal(emptyPresence.onlinePlayers, 0);
+  await server.stop();
+});
+
 test("default store persists players across reopen", async () => {
   const dir = mkdtempSync(join(tmpdir(), "machiai-store-"));
   const storePath = join(dir, "server-store.sqlite");
@@ -126,4 +158,15 @@ function emitAck(socket: Socket, event: string, payload: unknown): Promise<unkno
 
 function onceSocket<T = unknown>(socket: Socket, event: string): Promise<T> {
   return new Promise((resolve) => socket.once(event, resolve as (...args: unknown[]) => void));
+}
+
+async function waitForPresence(url: string, expectedOnlinePlayers: number): Promise<PresenceState> {
+  let last: PresenceState | undefined;
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const response = await fetch(new URL("/presence", url));
+    last = (await response.json()) as PresenceState;
+    if (last.onlinePlayers === expectedOnlinePlayers) return last;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  return last ?? { onlinePlayers: -1, updatedAt: new Date().toISOString() };
 }

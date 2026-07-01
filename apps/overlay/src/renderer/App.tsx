@@ -7,6 +7,7 @@ import type {
   MachiaiError,
   OverlayBootstrap,
   PlayerProfile,
+  PresenceState,
   SnapResult,
 } from "../../../../packages/shared/src/index.js";
 
@@ -48,6 +49,7 @@ export function App() {
   const [message, setMessage] = useState("Opening Machiai.");
   const [agentFinished, setAgentFinished] = useState(false);
   const [ratingDelta, setRatingDelta] = useState<number | undefined>();
+  const [presence, setPresence] = useState<PresenceState | undefined>();
   const [, setClockTick] = useState(0);
 
   const playerColor = useMemo(() => {
@@ -112,15 +114,21 @@ export function App() {
       setDetection(nextBootstrap.detection);
       setMessage(nextBootstrap.detection.reason);
 
-      const socket = io(nextBootstrap.serverUrl, { transports: ["websocket"] });
+      const socket = io(nextBootstrap.serverUrl, { transports: ["websocket", "polling"], timeout: 8000 });
       socketRef.current = socket;
       socket.on("connect", () => {
         setConnection("online");
         void emitAck(socket, "auth.anonymous", nextBootstrap.profile)
-          .then(() => syncWait(nextBootstrap.detection))
+          .then((response) => {
+            if (isAuthAck(response)) setPresence(response.presence);
+            return syncWait(nextBootstrap.detection);
+          })
           .catch((error) => setMessage(errorMessage(error)));
       });
-      socket.on("disconnect", () => setConnection("offline"));
+      socket.on("disconnect", () => {
+        setConnection("offline");
+        setPresence(undefined);
+      });
       socket.on("connect_error", (error) => {
         setConnection("offline");
         setMessage(`Matchmaking unavailable: ${error.message}`);
@@ -151,6 +159,7 @@ export function App() {
         setProfile(payload.player);
         setRatingDelta(payload.rating.delta);
       });
+      socket.on("presence.updated", (nextPresence: PresenceState) => setPresence(nextPresence));
       socket.on("error", (error: MachiaiError) => setMessage(error.message));
     });
 
@@ -275,9 +284,14 @@ export function App() {
     <main className="shell">
       <header className="topbar">
         <strong>Machiai</strong>
-        <button className="iconButton" onClick={() => void snap()} title="Snap beside Codex, Claude, Cursor, or Terminal">
-          ⇱
-        </button>
+        <div className="topActions">
+          <span className="onlineCount" aria-label={`${presence?.onlinePlayers ?? 0} players online`}>
+            {formatOnlineCount(presence?.onlinePlayers, connection)}
+          </span>
+          <button className="iconButton" onClick={() => void snap()} title="Snap beside Codex, Claude, Cursor, or Terminal">
+            ⇱
+          </button>
+        </div>
       </header>
 
       <section className="statusBar">
@@ -452,6 +466,12 @@ function connectionLabel(connection: ConnectionState, host: string): string {
   return "offline";
 }
 
+function formatOnlineCount(count: number | undefined, connection: ConnectionState): string {
+  if (connection !== "online") return "0 online";
+  const next = count ?? 1;
+  return `${next} online`;
+}
+
 function labelForPlayer(playerId: string | undefined, handle: string | undefined, profile: PlayerProfile | undefined, fallback: string): string {
   if (profile && playerId === profile.playerId) return displayNameForProfile(profile);
   return displayHandle(handle) || fallback;
@@ -490,4 +510,8 @@ function emitAck<T = unknown>(socket: Socket, event: string, payload: unknown): 
 
 function isErrorAck(value: unknown): value is { ok: false; error: MachiaiError } {
   return Boolean(value && typeof value === "object" && "ok" in value && (value as { ok: unknown }).ok === false && "error" in value);
+}
+
+function isAuthAck(value: unknown): value is { ok: true; player: PlayerProfile; presence: PresenceState } {
+  return Boolean(value && typeof value === "object" && "presence" in value);
 }

@@ -15,6 +15,7 @@ import {
   resignGame,
   type GameState,
   type PlayerProfile,
+  type PresenceState,
   type QueueTicket,
   type WaitSession,
 } from "../../../packages/shared/src/index.js";
@@ -92,12 +93,18 @@ export class MachiaiServer {
       updatedAt: now,
     };
     await this.requiredStore().upsertPlayer(player);
+    const previousPlayerId = socket.data.playerId as string | undefined;
+    if (previousPlayerId && previousPlayerId !== player.playerId) {
+      this.untrackSocket(previousPlayerId, socket.id);
+      socket.leave(`player:${previousPlayerId}`);
+    }
     socket.data.playerId = player.playerId;
     socket.join(`player:${player.playerId}`);
     this.trackSocket(player.playerId, socket.id);
     this.clearDisconnectTimer(player.playerId);
     socket.emit("auth.ready", player);
-    ack?.({ ok: true, player });
+    const presence = this.broadcastPresence();
+    ack?.({ ok: true, player, presence });
   }
 
   private async onProfileUpdate(socket: Socket, payload: { displayName?: string; handle?: string }, ack?: (value: unknown) => void) {
@@ -202,6 +209,7 @@ export class MachiaiServer {
     const playerId = socket.data.playerId as string | undefined;
     if (!playerId) return;
     this.untrackSocket(playerId, socket.id);
+    this.broadcastPresence();
     this.removeFromQueue(playerId);
     if ((this.socketsByPlayer.get(playerId)?.size ?? 0) > 0) return;
     const timer = setTimeout(() => void this.forfeitActiveGames(playerId), this.reconnectGraceMs);
@@ -315,6 +323,9 @@ export class MachiaiServer {
       const entries = await this.requiredStore().listLeaderboard(25);
       return this.json(res, { entries });
     }
+    if (url.startsWith("/presence")) {
+      return this.json(res, this.currentPresence());
+    }
     res.statusCode = 404;
     this.json(res, { error: "not_found" });
   }
@@ -354,6 +365,19 @@ export class MachiaiServer {
     if (!set) return;
     set.delete(socketId);
     if (set.size === 0) this.socketsByPlayer.delete(playerId);
+  }
+
+  private currentPresence(): PresenceState {
+    return {
+      onlinePlayers: this.socketsByPlayer.size,
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  private broadcastPresence(): PresenceState {
+    const presence = this.currentPresence();
+    this.io.emit("presence.updated", presence);
+    return presence;
   }
 
   private clearDisconnectTimer(playerId: string): void {

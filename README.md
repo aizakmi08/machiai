@@ -88,6 +88,22 @@ The server uses SQLite when the Node runtime exposes `node:sqlite`, with JSON fa
 MACHIAI_STORE=.machiai/server-store.sqlite machiai server
 ```
 
+## Friend Test
+
+Run one shared Machiai server, expose it with any HTTPS tunnel, then both players open the overlay against that URL:
+
+```bash
+machiai app --dev-server https://your-public-server.example
+```
+
+Rated queue still unlocks only while an agent is active. The reliable test path is:
+
+```bash
+MACHIAI_SERVER_URL=https://your-public-server.example machiai run --overlay -- codex exec "build the feature"
+```
+
+Your friend uses the same `MACHIAI_SERVER_URL`. The overlay shows the live online count in the top-right corner after both clients connect.
+
 ## Rating
 
 - Starting MMR: `500`
