@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "description": "Chess for people waiting on AI agents.",
   "type": "module",
+  "packageManager": "pnpm@11.7.0",
   "license": "MIT",
   "private": false,
   "bin": {
@@ -31,7 +32,6 @@
     "test": "node --test dist/test/*.test.js",
     "test:build": "pnpm build && pnpm test",
     "smoke": "pnpm build && node dist/packages/cli/src/cli.js demo && MACHIAI_HOME=/tmp/machiai-smoke node dist/packages/cli/src/cli.js profile && node dist/packages/cli/src/cli.js mcp-config && node dist/packages/cli/src/cli.js app --smoke",
-    "deploy:fly": "fly deploy",
     "pack:dry": "pnpm pack --pack-destination /tmp",
     "prepack": "pnpm build",
     "release:check": "pnpm check && pnpm test:build && pnpm smoke && pnpm publish --dry-run --access public --no-git-checks && pnpm pack:dry"

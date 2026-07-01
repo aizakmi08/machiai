@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: machiai-aizakmi08
+    runtime: node
+    plan: free
+    buildCommand: corepack enable && pnpm install --frozen-lockfile --ignore-optional && pnpm build
+    startCommand: node dist/apps/server/src/main.js
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: 22
+      - key: ELECTRON_SKIP_BINARY_DOWNLOAD
+        value: "1"
+      - key: HOST
+        value: 0.0.0.0
+      - key: MACHIAI_STORE
+        value: /tmp/machiai-server.sqlite

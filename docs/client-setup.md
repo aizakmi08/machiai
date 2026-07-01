@@ -12,7 +12,7 @@ Or open the overlay first:
 npx -y @aizakmi08/machiai app
 ```
 
-These commands use the default hosted server at `https://machiai-aizakmi08.fly.dev`.
+These commands use the default hosted server at `https://machiai-aizakmi08.onrender.com`.
 
 ## GitHub Quickstart Before npm Publish
 
