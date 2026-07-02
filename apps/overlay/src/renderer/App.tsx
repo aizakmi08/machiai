@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Chess, type Square } from "chess.js";
 import { io, type Socket } from "socket.io-client";
-import { normalizeTwitterHandle, twitterUrl } from "../../../../packages/shared/src/profile.js";
+import { isTwitterAuthenticated, normalizeTwitterHandle, twitterDisplayName, twitterUrl } from "../../../../packages/shared/src/profile.js";
 import type {
   AgentDetection,
   Color,
@@ -34,6 +34,8 @@ type QueueState = "idle" | "searching" | "in_game";
 type ConnectionState = "connecting" | "online" | "offline";
 type ChatMessage = { gameId: string; playerId: string; handle: string; message: string; createdAt: string };
 type ReactionMessage = { gameId: string; playerId: string; handle: string; reaction: string; createdAt: string };
+type XAuthStart = { ok: boolean; sessionId?: string; authUrl?: string; message?: string; error?: string };
+type XAuthPoll = { ok: boolean; status: "pending" | "complete" | "error" | "missing"; player?: PlayerProfile; error?: string };
 
 const REACTIONS = ["💀", "👀", "😂", "🤝"];
 
@@ -61,6 +63,7 @@ export function App() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [reaction, setReaction] = useState<ReactionMessage | undefined>();
   const [matchFound, setMatchFound] = useState(false);
+  const [signingIn, setSigningIn] = useState(false);
   const [, setClockTick] = useState(0);
 
   const playerColor = useMemo(() => {
@@ -138,7 +141,7 @@ export function App() {
               profileRef.current = response.player;
               setProfile(response.player);
               setPresence(response.presence);
-              await window.machiaiOverlay.saveProfile(response.player);
+              await saveServerProfile(response.player);
             }
             return syncWait(nextBootstrap.detection);
           })
@@ -147,6 +150,9 @@ export function App() {
       socket.on("disconnect", () => {
         setConnection("offline");
         setPresence(undefined);
+      });
+      socket.on("auth.ready", (nextProfile: PlayerProfile) => {
+        void saveServerProfile(nextProfile).catch((error) => setMessage(errorMessage(error)));
       });
       socket.on("connect_error", (error) => {
         setConnection("offline");
@@ -182,9 +188,7 @@ export function App() {
         setMessage(resultMessage(nextGame, profileRef.current?.playerId ?? nextBootstrap.profile.playerId));
       });
       socket.on("rating.updated", (payload: { player: PlayerProfile; rating: { delta: number } }) => {
-        void window.machiaiOverlay.saveProfile(payload.player).catch((error) => setMessage(errorMessage(error)));
-        profileRef.current = payload.player;
-        setProfile(payload.player);
+        void saveServerProfile(payload.player).catch((error) => setMessage(errorMessage(error)));
         setRatingDelta(payload.rating.delta);
       });
       socket.on("presence.updated", (nextPresence: PresenceState) => setPresence(nextPresence));
@@ -216,6 +220,7 @@ export function App() {
   }, []);
 
   const canQueue = detection?.status === "active" && connection === "online" && queue === "idle" && game?.status !== "active";
+  const signedIn = isTwitterAuthenticated(profile);
   const board = useMemo(() => parseFen(game?.fen ?? START_FEN), [game?.fen]);
   const squares = useMemo(() => orientedSquares(playerColor), [playerColor]);
   const lastMove = game?.moves.at(-1);
@@ -224,15 +229,16 @@ export function App() {
   const topPlayerId = game ? (playerColor === "white" ? game.blackPlayerId : game.whitePlayerId) : undefined;
   const bottomPlayerId = game ? (playerColor === "white" ? game.whitePlayerId : game.blackPlayerId) : profile?.playerId;
   const topPlayer = labelForPlayer(topPlayerId, playerColor === "white" ? game?.blackHandle : game?.whiteHandle, profile, "Opponent");
-  const bottomPlayer = labelForPlayer(bottomPlayerId, playerColor === "white" ? game?.whiteHandle : game?.blackHandle, profile, "You");
+  const bottomPlayer = signedIn ? (twitterDisplayName(profile?.twitterHandle) ?? "You") : labelForPlayer(bottomPlayerId, playerColor === "white" ? game?.whiteHandle : game?.blackHandle, profile, "You");
   const topTwitter = game ? (playerColor === "white" ? game.blackTwitterHandle : game.whiteTwitterHandle) : undefined;
   const bottomTwitter = game ? (playerColor === "white" ? game.whiteTwitterHandle : game.blackTwitterHandle) : profile?.twitterHandle;
+  const showBottomTwitter = bottomTwitter && bottomPlayer !== `@${bottomTwitter}`;
   const topMmr = game ? (playerColor === "white" ? game.blackMmr : game.whiteMmr) : undefined;
   const bottomMmr = game ? (playerColor === "white" ? game.whiteMmr : game.blackMmr) : profile?.mmr;
   const topClock = game ? (playerColor === "white" ? game.clocks.blackMs : game.clocks.whiteMs) : 3 * 60 * 1000;
   const bottomClock = game ? (playerColor === "white" ? game.clocks.whiteMs : game.clocks.blackMs) : 3 * 60 * 1000;
   const serverHost = bootstrap ? new URL(bootstrap.serverUrl).host : "server";
-  const startLabel = connection !== "online" ? "Connecting" : detection?.status === "active" ? "Start" : "No agent";
+  const startLabel = connection !== "online" ? "Connecting" : !signedIn ? (signingIn ? "Signing in" : "Sign in with X") : detection?.status === "active" ? "Start" : "No agent";
   const resultTone = game?.status === "ended" ? resultForPlayerColor(game, playerColor) : "none";
   const lastMoveLabel = lastMove ? `${lastMove.color === playerColor ? "You" : "Last"}: ${lastMove.san}` : "";
 
@@ -259,6 +265,44 @@ export function App() {
     await emitAck(socket, "queue.leave", {});
     setQueue("idle");
     setMessage("Queue left.");
+  }
+
+  async function saveServerProfile(nextProfile: PlayerProfile) {
+    const saved = await window.machiaiOverlay.saveProfile(nextProfile);
+    profileRef.current = saved;
+    setProfile(saved);
+    return saved;
+  }
+
+  async function signInWithX() {
+    if (!bootstrap || !profile || signingIn || connection !== "online") return;
+    try {
+      setSigningIn(true);
+      setMessage("Opening X login.");
+      const startResponse = await fetch(new URL("/auth/x/start", bootstrap.serverUrl), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ playerId: profile.playerId, deviceKey: profile.deviceKey }),
+      });
+      const start = (await startResponse.json()) as XAuthStart;
+      if (!startResponse.ok || !start.ok || !start.authUrl || !start.sessionId) {
+        throw new Error(start.message ?? start.error ?? "X login is not available.");
+      }
+      await window.machiaiOverlay.openExternal(start.authUrl);
+      setMessage("Finish X login in your browser.");
+      const nextProfile = await pollXLogin(bootstrap.serverUrl, start.sessionId);
+      const saved = await saveServerProfile(nextProfile);
+      const socket = socketRef.current;
+      if (socket?.connected) {
+        const auth = (await emitAck(socket, "auth.anonymous", saved)) as { player?: PlayerProfile };
+        if (auth.player) await saveServerProfile(auth.player);
+      }
+      setMessage(`Signed in as ${twitterDisplayName(saved.twitterHandle) ?? saved.displayName ?? saved.handle}.`);
+    } catch (error) {
+      setMessage(errorMessage(error));
+    } finally {
+      setSigningIn(false);
+    }
   }
 
   async function resign() {
@@ -460,10 +504,12 @@ export function App() {
                 <span className="nameWithEdit">
                   <span>{bottomPlayer}</span>
                   {bottomMmr ? <em>{bottomMmr} MMR</em> : null}
-                  {bottomTwitter ? <em>@{bottomTwitter}</em> : null}
-                  <button type="button" onClick={() => setEditingName(true)}>
-                    Edit
-                  </button>
+                  {showBottomTwitter ? <em>@{bottomTwitter}</em> : null}
+                  {!signedIn ? (
+                    <button type="button" onClick={() => setEditingName(true)}>
+                      Edit
+                    </button>
+                  ) : null}
                 </span>
               )}
               <strong>{formatClock(liveClock(game, playerColor, bottomClock))}</strong>
@@ -479,7 +525,7 @@ export function App() {
                   Leave Queue
                 </button>
               ) : (
-                <button className="primary" disabled={!canQueue} onClick={() => void joinQueue()}>
+                <button className="primary" disabled={signedIn ? !canQueue : connection !== "online" || signingIn} onClick={() => void (signedIn ? joinQueue() : signInWithX())}>
                   {startLabel}
                 </button>
               )}
@@ -528,7 +574,15 @@ export function App() {
       </section>
 
       <footer>
-        <span>{agentFinished ? "Agent finished. Finish this game." : queue === "searching" ? "Searching. Bot starts if lobby is empty." : message}</span>
+        <span>
+          {agentFinished
+            ? "Agent finished. Finish this game."
+            : queue === "searching"
+              ? "Searching. Bot starts if lobby is empty."
+              : signedIn || signingIn
+                ? message
+                : "Sign in with X to play rated."}
+        </span>
       </footer>
     </main>
   );
@@ -649,6 +703,23 @@ function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === "object" && error && "message" in error) return String((error as { message: unknown }).message);
   return String(error);
+}
+
+async function pollXLogin(serverUrl: string, sessionId: string): Promise<PlayerProfile> {
+  for (let attempt = 0; attempt < 120; attempt++) {
+    const response = await fetch(new URL(`/auth/x/session/${encodeURIComponent(sessionId)}`, serverUrl));
+    const payload = (await response.json()) as XAuthPoll;
+    if (payload.status === "complete" && payload.player) return payload.player;
+    if (payload.status === "error" || payload.status === "missing" || !payload.ok) {
+      throw new Error(payload.error ?? "X login failed.");
+    }
+    await sleep(1500);
+  }
+  throw new Error("X login timed out.");
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 function emitAck<T = unknown>(socket: Socket, event: string, payload: unknown): Promise<T> {

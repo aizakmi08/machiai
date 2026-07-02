@@ -6,6 +6,14 @@ Machiai is a floating chess overlay for Codex, Claude, Cursor, and other coding 
 
 ## One Command
 
+For most users:
+
+```bash
+npx -y @aizakmi08/machiai app
+```
+
+The overlay opens, asks the user to sign in with X, then unlocks rated chess when an agent is active.
+
 Final public setup:
 
 ```bash
@@ -44,6 +52,7 @@ Rules that keep it healthy:
 
 - 3+0 chess only: max 6 minutes of clock time.
 - No rated queue without an active agent wait session.
+- Rated online play requires X login; usernames are the player's `@handle`.
 - No infinite rematch button.
 - Quick chat and reactions are in-game only. No streaks, loot, or feed mechanics.
 - Bot practice is unrated and only fills an empty lobby.
@@ -81,6 +90,8 @@ machiai run --overlay -- codex exec "build the feature"
 
 The overlay is an always-on-top macOS window with drag/drop and click-to-move chess. By default it connects to the public Machiai matchmaking server. It detects active Machiai wait sessions, MCP wait sessions, supported terminal agent processes, and visible Codex/Claude/Cursor app processes. Wrapping with `machiai run --overlay -- ...` is still the strictest unlock path.
 
+Rated queue requires X login. The package never asks users for API keys.
+
 For private local testing:
 
 ```bash
@@ -94,6 +105,20 @@ machiai app --dev-server http://127.0.0.1:4137
 ```
 
 ## Local Server
+
+X login is configured only on the hosted server. For a deployed server, set:
+
+```bash
+X_CLIENT_ID=...
+X_CLIENT_SECRET=...
+MACHIAI_PUBLIC_URL=https://your-machiai-server.example
+```
+
+The X callback URL should be:
+
+```text
+https://your-machiai-server.example/auth/x/callback
+```
 
 Terminal 1:
 

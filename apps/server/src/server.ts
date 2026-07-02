@@ -1,4 +1,5 @@
-import { createServer, type Server as HttpServer } from "node:http";
+import { createHash, randomBytes } from "node:crypto";
+import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
 import { AddressInfo } from "node:net";
 import { Server as SocketServer, type Socket } from "socket.io";
 import {
@@ -13,7 +14,9 @@ import {
   createGame,
   createHandle,
   createId,
+  isTwitterAuthenticated,
   normalizeTwitterHandle,
+  twitterDisplayName,
   resignGame,
   tickClock,
   type GameState,
@@ -32,6 +35,19 @@ export interface MachiaiServerOptions {
   reconnectGraceMs?: number;
 }
 
+interface XAuthSession {
+  sessionId: string;
+  state: string;
+  codeVerifier: string;
+  playerId: string;
+  deviceKey?: string;
+  createdAtMs: number;
+  redirectUri: string;
+  status: "pending" | "complete" | "error";
+  player?: PlayerProfile;
+  error?: string;
+}
+
 export class MachiaiServer {
   readonly http: HttpServer;
   readonly io: SocketServer;
@@ -42,13 +58,14 @@ export class MachiaiServer {
   private readonly disconnectTimers = new Map<string, NodeJS.Timeout>();
   private readonly botTimers = new Map<string, NodeJS.Timeout>();
   private readonly botMoveTimers = new Map<string, NodeJS.Timeout>();
+  private readonly xAuthSessions = new Map<string, XAuthSession>();
   private readonly botFallbackMs: number;
   private readonly botMoveMs: number;
   private readonly reconnectGraceMs: number;
 
   constructor(private readonly options: MachiaiServerOptions = {}) {
     this.http = createServer((req, res) => {
-      void this.handleHttp(req.url ?? "/", res);
+      void this.handleHttp(req, res);
     });
     this.io = new SocketServer(this.http, {
       cors: { origin: "*" },
@@ -94,12 +111,16 @@ export class MachiaiServer {
     const now = new Date().toISOString();
     const playerId = payload.playerId ?? createId("player");
     const existing = await this.requiredStore().getPlayer(playerId);
+    const authValid = Boolean(payload.authToken && existing?.authToken && payload.authToken === existing.authToken);
     const player: PlayerProfile = {
       playerId,
       deviceKey: payload.deviceKey ?? existing?.deviceKey ?? createId("device"),
       handle: payload.handle ?? existing?.handle ?? createHandle(),
-      displayName: payload.displayName ?? existing?.displayName,
-      twitterHandle: normalizeTwitterHandle(payload.twitterHandle ?? existing?.twitterHandle),
+      displayName: authValid ? (twitterDisplayName(existing?.twitterHandle) ?? existing?.displayName) : (payload.displayName ?? existing?.displayName),
+      twitterHandle: authValid ? existing?.twitterHandle : normalizeTwitterHandle(payload.twitterHandle ?? existing?.twitterHandle),
+      xUserId: existing?.xUserId,
+      authToken: existing?.authToken,
+      profileImageUrl: existing?.profileImageUrl,
       mmr: existing?.mmr ?? payload.mmr ?? STARTING_MMR,
       ratedGames: existing?.ratedGames ?? payload.ratedGames ?? 0,
       createdAt: existing?.createdAt ?? payload.createdAt ?? now,
@@ -112,12 +133,14 @@ export class MachiaiServer {
       socket.leave(`player:${previousPlayerId}`);
     }
     socket.data.playerId = player.playerId;
+    socket.data.twitterAuthenticated = authValid;
     socket.join(`player:${player.playerId}`);
     this.trackSocket(player.playerId, socket.id);
     this.clearDisconnectTimer(player.playerId);
-    socket.emit("auth.ready", player);
+    const responsePlayer = authValid ? player : stripPrivateAuth(player);
+    socket.emit("auth.ready", responsePlayer);
     const presence = this.broadcastPresence();
-    ack?.({ ok: true, player, presence });
+    ack?.({ ok: true, player: responsePlayer, presence });
   }
 
   private async onProfileUpdate(socket: Socket, payload: { displayName?: string; handle?: string; twitterHandle?: string }, ack?: (value: unknown) => void) {
@@ -159,6 +182,12 @@ export class MachiaiServer {
 
   private async onQueueJoin(socket: Socket, payload: { sessionId: string }, ack?: (value: unknown) => void): Promise<void> {
     const player = await this.requireSocketPlayer(socket);
+    if (!this.isSocketTwitterAuthenticated(socket, player)) {
+      const locked = { code: "auth_required", message: "Sign in with X to play rated chess." };
+      socket.emit("wait.locked", locked);
+      ack?.({ ok: false, error: locked });
+      return;
+    }
     const session = await this.requiredStore().getWaitSession(payload.sessionId);
     if (!session || !session.active || session.playerId !== player.playerId) {
       const locked = { code: "wait_required", message: "Rated queue is locked until an agent is running." };
@@ -169,7 +198,7 @@ export class MachiaiServer {
     if (!this.queue.some((ticket) => ticket.playerId === player.playerId)) {
       this.queue.push({
         playerId: player.playerId,
-        handle: player.displayName || player.handle,
+        handle: twitterDisplayName(player.twitterHandle) ?? player.displayName ?? player.handle,
         twitterHandle: player.twitterHandle,
         mmr: player.mmr,
         sessionId: session.sessionId,
@@ -400,7 +429,14 @@ export class MachiaiServer {
     }
   }
 
-  private async handleHttp(url: string, res: import("node:http").ServerResponse): Promise<void> {
+  private async handleHttp(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    this.setCors(res);
+    if (req.method === "OPTIONS") {
+      res.statusCode = 204;
+      res.end();
+      return;
+    }
+    const url = req.url ?? "/";
     if (url === "/" || url.startsWith("/?")) {
       return this.json(res, {
         ok: true,
@@ -421,13 +457,163 @@ export class MachiaiServer {
     if (url.startsWith("/presence")) {
       return this.json(res, this.currentPresence());
     }
+    if (url.startsWith("/auth/x/start")) {
+      return this.startXAuth(req, res);
+    }
+    if (url.startsWith("/auth/x/session/")) {
+      const sessionId = decodeURIComponent(url.split("/auth/x/session/")[1]?.split(/[?#]/)[0] ?? "");
+      return this.pollXAuthSession(sessionId, res);
+    }
+    if (url.startsWith("/auth/x/callback")) {
+      return this.completeXAuth(req, res);
+    }
     res.statusCode = 404;
     this.json(res, { error: "not_found" });
   }
 
-  private json(res: import("node:http").ServerResponse, value: unknown): void {
+  private async startXAuth(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    if (req.method !== "POST") {
+      res.statusCode = 405;
+      return this.json(res, { ok: false, error: "method_not_allowed" });
+    }
+    const config = this.xAuthConfig(req);
+    if (!config) {
+      res.statusCode = 501;
+      return this.json(res, {
+        ok: false,
+        error: "x_auth_not_configured",
+        message: "X login is not configured on this Machiai server.",
+      });
+    }
+    const body = await readJsonBody(req);
+    const playerId = typeof body.playerId === "string" && body.playerId ? body.playerId : createId("player");
+    const deviceKey = typeof body.deviceKey === "string" ? body.deviceKey : undefined;
+    const sessionId = createId("auth");
+    const state = randomBase64Url(24);
+    const codeVerifier = randomBase64Url(48);
+    const codeChallenge = base64Url(createHash("sha256").update(codeVerifier).digest());
+    this.xAuthSessions.set(sessionId, {
+      sessionId,
+      state,
+      codeVerifier,
+      playerId,
+      deviceKey,
+      redirectUri: config.redirectUri,
+      createdAtMs: Date.now(),
+      status: "pending",
+    });
+    const authUrl = new URL("https://x.com/i/oauth2/authorize");
+    authUrl.searchParams.set("response_type", "code");
+    authUrl.searchParams.set("client_id", config.clientId);
+    authUrl.searchParams.set("redirect_uri", config.redirectUri);
+    authUrl.searchParams.set("scope", "tweet.read users.read");
+    authUrl.searchParams.set("state", state);
+    authUrl.searchParams.set("code_challenge", codeChallenge);
+    authUrl.searchParams.set("code_challenge_method", "S256");
+    return this.json(res, { ok: true, sessionId, authUrl: authUrl.toString() });
+  }
+
+  private pollXAuthSession(sessionId: string, res: ServerResponse): void {
+    const session = this.xAuthSessions.get(sessionId);
+    if (!session) {
+      res.statusCode = 404;
+      return this.json(res, { ok: false, status: "missing", error: "Unknown auth session." });
+    }
+    if (Date.now() - session.createdAtMs > 10 * 60 * 1000 && session.status === "pending") {
+      session.status = "error";
+      session.error = "X login expired. Try again.";
+    }
+    return this.json(res, {
+      ok: session.status !== "error",
+      status: session.status,
+      player: session.player,
+      error: session.error,
+    });
+  }
+
+  private async completeXAuth(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const config = this.xAuthConfig(req);
+    const callbackUrl = new URL(req.url ?? "/", requestBaseUrl(req));
+    const state = callbackUrl.searchParams.get("state") ?? "";
+    const code = callbackUrl.searchParams.get("code") ?? "";
+    const error = callbackUrl.searchParams.get("error");
+    const session = [...this.xAuthSessions.values()].find((item) => item.state === state);
+    if (!session) {
+      res.statusCode = 400;
+      return this.html(res, "Machiai", "Unknown or expired login session. Close this tab and try again.");
+    }
+    if (error || !code || !config) {
+      session.status = "error";
+      session.error = error ?? "X login failed.";
+      res.statusCode = 400;
+      return this.html(res, "Machiai", session.error);
+    }
+
+    try {
+      const token = await exchangeXCode({ ...config, redirectUri: session.redirectUri, code, codeVerifier: session.codeVerifier });
+      const xUser = await fetchXUser(token.accessToken);
+      const twitterHandle = normalizeTwitterHandle(xUser.username);
+      if (!twitterHandle) throw new Error("X did not return a username.");
+      const existingByX = await this.requiredStore().getPlayerByXUserId(xUser.id);
+      const existingLocal = await this.requiredStore().getPlayer(session.playerId);
+      const existing = existingByX ?? existingLocal;
+      const now = new Date().toISOString();
+      const player: PlayerProfile = {
+        playerId: existing?.playerId ?? session.playerId,
+        deviceKey: existing?.deviceKey ?? session.deviceKey ?? createId("device"),
+        handle: existing?.handle ?? createHandle(),
+        displayName: twitterDisplayName(twitterHandle),
+        twitterHandle,
+        xUserId: xUser.id,
+        authToken: createAuthToken(),
+        profileImageUrl: xUser.profileImageUrl,
+        mmr: existing?.mmr ?? STARTING_MMR,
+        ratedGames: existing?.ratedGames ?? 0,
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: now,
+      };
+      await this.requiredStore().upsertPlayer(player);
+      session.status = "complete";
+      session.player = player;
+      this.io.to(`player:${player.playerId}`).emit("auth.ready", player);
+      return this.html(res, "Machiai", `Signed in as @${twitterHandle}. You can return to Machiai.`);
+    } catch (caught) {
+      session.status = "error";
+      session.error = caught instanceof Error ? caught.message : String(caught);
+      res.statusCode = 500;
+      return this.html(res, "Machiai", "X login failed. Close this tab and try again.");
+    }
+  }
+
+  private xAuthConfig(req: IncomingMessage): { clientId: string; clientSecret?: string; redirectUri: string } | undefined {
+    const clientId = process.env.X_CLIENT_ID ?? process.env.TWITTER_CLIENT_ID;
+    if (!clientId) return undefined;
+    const publicUrl = (process.env.MACHIAI_PUBLIC_URL ?? requestBaseUrl(req)).replace(/\/+$/, "");
+    return {
+      clientId,
+      clientSecret: process.env.X_CLIENT_SECRET ?? process.env.TWITTER_CLIENT_SECRET,
+      redirectUri: `${publicUrl}/auth/x/callback`,
+    };
+  }
+
+  private isSocketTwitterAuthenticated(socket: Socket, player: PlayerProfile): boolean {
+    return socket.data.twitterAuthenticated === true && isTwitterAuthenticated(player);
+  }
+
+  private setCors(res: ServerResponse): void {
+    res.setHeader("access-control-allow-origin", "*");
+    res.setHeader("access-control-allow-methods", "GET,POST,OPTIONS");
+    res.setHeader("access-control-allow-headers", "content-type");
+  }
+
+  private json(res: ServerResponse, value: unknown): void {
     res.setHeader("content-type", "application/json");
     res.end(JSON.stringify(value, null, 2));
+  }
+
+  private html(res: ServerResponse, title: string, message: string): void {
+    res.setHeader("content-type", "text/html; charset=utf-8");
+    res.end(`<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(title)}</title><style>body{font-family:system-ui,sans-serif;background:#000;color:#fff;display:grid;place-items:center;min-height:100vh;margin:0}main{max-width:420px;padding:32px;text-align:center}p{color:#bbb;line-height:1.5}</style></head><body><main><h1>${escapeHtml(title)}</h1><p>${escapeHtml(message)}</p></main></body></html>`);
   }
 
   private requiredStore(): MachiaiStore {
@@ -514,4 +700,101 @@ export class MachiaiServer {
     socket.emit("error", payload);
     ack?.({ ok: false, error: payload });
   }
+}
+
+async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    if (Buffer.concat(chunks).length > 32 * 1024) throw new Error("Request body is too large.");
+  }
+  if (chunks.length === 0) return {};
+  return JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
+}
+
+function requestBaseUrl(req: IncomingMessage): string {
+  const proto = String(req.headers["x-forwarded-proto"] ?? "http").split(",")[0].trim();
+  const host = String(req.headers["x-forwarded-host"] ?? req.headers.host ?? "127.0.0.1");
+  return `${proto}://${host}`;
+}
+
+function randomBase64Url(bytes: number): string {
+  return base64Url(randomBytes(bytes));
+}
+
+function base64Url(input: Buffer): string {
+  return input.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function createAuthToken(): string {
+  return `machiai_${randomBase64Url(32)}`;
+}
+
+function stripPrivateAuth(player: PlayerProfile): PlayerProfile {
+  return {
+    ...player,
+    xUserId: undefined,
+    authToken: undefined,
+    profileImageUrl: undefined,
+  };
+}
+
+async function exchangeXCode(input: {
+  clientId: string;
+  clientSecret?: string;
+  redirectUri: string;
+  code: string;
+  codeVerifier: string;
+}): Promise<{ accessToken: string }> {
+  const body = new URLSearchParams({
+    code: input.code,
+    grant_type: "authorization_code",
+    redirect_uri: input.redirectUri,
+    code_verifier: input.codeVerifier,
+  });
+  const headers: Record<string, string> = {
+    "content-type": "application/x-www-form-urlencoded",
+  };
+  if (input.clientSecret) {
+    headers.authorization = `Basic ${Buffer.from(`${input.clientId}:${input.clientSecret}`).toString("base64")}`;
+  } else {
+    body.set("client_id", input.clientId);
+  }
+  const response = await fetch("https://api.x.com/2/oauth2/token", {
+    method: "POST",
+    headers,
+    body,
+  });
+  const payload = (await response.json().catch(() => ({}))) as { access_token?: string; error?: string; error_description?: string };
+  if (!response.ok || !payload.access_token) {
+    throw new Error(payload.error_description ?? payload.error ?? `X token exchange failed: ${response.status}`);
+  }
+  return { accessToken: payload.access_token };
+}
+
+async function fetchXUser(accessToken: string): Promise<{ id: string; username: string; profileImageUrl?: string }> {
+  const response = await fetch("https://api.x.com/2/users/me?user.fields=profile_image_url,name,username", {
+    headers: { authorization: `Bearer ${accessToken}` },
+  });
+  const payload = (await response.json().catch(() => ({}))) as {
+    data?: { id?: string; username?: string; profile_image_url?: string };
+    detail?: string;
+    title?: string;
+  };
+  const id = payload.data?.id;
+  const username = payload.data?.username;
+  if (!response.ok || !id || !username) {
+    throw new Error(payload.detail ?? payload.title ?? `X user lookup failed: ${response.status}`);
+  }
+  return { id, username, profileImageUrl: payload.data?.profile_image_url };
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (char) => {
+    if (char === "&") return "&amp;";
+    if (char === "<") return "&lt;";
+    if (char === ">") return "&gt;";
+    if (char === '"') return "&quot;";
+    return "&#39;";
+  });
 }

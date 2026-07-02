@@ -1,3 +1,5 @@
+import type { PlayerProfile } from "./types.js";
+
 export function normalizeTwitterHandle(input: string | undefined): string | undefined {
   const raw = input?.trim();
   if (!raw) return undefined;
@@ -10,4 +12,13 @@ export function normalizeTwitterHandle(input: string | undefined): string | unde
 
 export function twitterUrl(handle: string): string {
   return `https://x.com/${normalizeTwitterHandle(handle) ?? ""}`;
+}
+
+export function isTwitterAuthenticated(profile: Pick<PlayerProfile, "xUserId" | "twitterHandle" | "authToken"> | undefined): boolean {
+  return Boolean(profile?.xUserId && profile.twitterHandle && profile.authToken);
+}
+
+export function twitterDisplayName(handle: string | undefined): string | undefined {
+  const normalized = normalizeTwitterHandle(handle);
+  return normalized ? `@${normalized}` : undefined;
 }

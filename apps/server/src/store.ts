@@ -6,6 +6,7 @@ export interface MachiaiStore {
   init(): Promise<void>;
   upsertPlayer(player: PlayerProfile): Promise<PlayerProfile>;
   getPlayer(playerId: string): Promise<PlayerProfile | undefined>;
+  getPlayerByXUserId(xUserId: string): Promise<PlayerProfile | undefined>;
   listLeaderboard(limit: number): Promise<LeaderboardEntry[]>;
   updatePlayerRating(playerId: string, change: RatingChange): Promise<PlayerProfile>;
   upsertWaitSession(session: WaitSession): Promise<WaitSession>;
@@ -68,6 +69,10 @@ export class JsonFileStore implements MachiaiStore {
 
   async getPlayer(playerId: string): Promise<PlayerProfile | undefined> {
     return this.players.get(playerId);
+  }
+
+  async getPlayerByXUserId(xUserId: string): Promise<PlayerProfile | undefined> {
+    return [...this.players.values()].find((player) => player.xUserId === xUserId);
   }
 
   async listLeaderboard(limit: number): Promise<LeaderboardEntry[]> {
@@ -178,6 +183,9 @@ export class SqliteStore implements MachiaiStore {
         handle TEXT NOT NULL,
         display_name TEXT,
         twitter_handle TEXT,
+        x_user_id TEXT,
+        auth_token TEXT,
+        profile_image_url TEXT,
         mmr INTEGER NOT NULL,
         rated_games INTEGER NOT NULL,
         created_at TEXT NOT NULL,
@@ -227,18 +235,24 @@ export class SqliteStore implements MachiaiStore {
       );
     `);
     this.tryAddColumn("players", "twitter_handle", "TEXT");
+    this.tryAddColumn("players", "x_user_id", "TEXT");
+    this.tryAddColumn("players", "auth_token", "TEXT");
+    this.tryAddColumn("players", "profile_image_url", "TEXT");
   }
 
   async upsertPlayer(player: PlayerProfile): Promise<PlayerProfile> {
     this.requiredDb()
       .prepare(
-        `INSERT INTO players (player_id, device_key, handle, display_name, twitter_handle, mmr, rated_games, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO players (player_id, device_key, handle, display_name, twitter_handle, x_user_id, auth_token, profile_image_url, mmr, rated_games, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(player_id) DO UPDATE SET
           device_key=excluded.device_key,
           handle=excluded.handle,
           display_name=excluded.display_name,
           twitter_handle=excluded.twitter_handle,
+          x_user_id=excluded.x_user_id,
+          auth_token=excluded.auth_token,
+          profile_image_url=excluded.profile_image_url,
           mmr=excluded.mmr,
           rated_games=excluded.rated_games,
           updated_at=excluded.updated_at`,
@@ -249,6 +263,9 @@ export class SqliteStore implements MachiaiStore {
         player.handle,
         player.displayName ?? null,
         player.twitterHandle ?? null,
+        player.xUserId ?? null,
+        player.authToken ?? null,
+        player.profileImageUrl ?? null,
         player.mmr,
         player.ratedGames,
         player.createdAt,
@@ -259,6 +276,11 @@ export class SqliteStore implements MachiaiStore {
 
   async getPlayer(playerId: string): Promise<PlayerProfile | undefined> {
     const row = this.requiredDb().prepare("SELECT * FROM players WHERE player_id = ?").get(playerId);
+    return row ? rowToPlayer(row) : undefined;
+  }
+
+  async getPlayerByXUserId(xUserId: string): Promise<PlayerProfile | undefined> {
+    const row = this.requiredDb().prepare("SELECT * FROM players WHERE x_user_id = ?").get(xUserId);
     return row ? rowToPlayer(row) : undefined;
   }
 
@@ -421,6 +443,9 @@ function rowToPlayer(row: Record<string, unknown>): PlayerProfile {
     handle: String(row.handle),
     displayName: row.display_name ? String(row.display_name) : undefined,
     twitterHandle: row.twitter_handle ? String(row.twitter_handle) : undefined,
+    xUserId: row.x_user_id ? String(row.x_user_id) : undefined,
+    authToken: row.auth_token ? String(row.auth_token) : undefined,
+    profileImageUrl: row.profile_image_url ? String(row.profile_image_url) : undefined,
     mmr: Number(row.mmr),
     ratedGames: Number(row.rated_games),
     createdAt: String(row.created_at),

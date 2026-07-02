@@ -9,9 +9,11 @@ import { createStore, JsonFileStore } from "../apps/server/src/store.js";
 import { botMmrForPlayer, createDeviceKey, createId, STARTING_MMR, type GameState, type PlayerProfile, type PresenceState } from "../packages/shared/src/index.js";
 
 test("two clients match, finish a rated game, and receive rating updates", async () => {
-  const { server, url } = await startTestServer();
-  const alice = player("alice");
-  const bob = { ...player("bob"), twitterHandle: "bob_codes" };
+  const { server, url, store } = await startTestServer();
+  const alice = signedPlayer("alice");
+  const bob = { ...signedPlayer("bob"), twitterHandle: "bob_codes", displayName: "@bob_codes" };
+  await store.upsertPlayer(alice);
+  await store.upsertPlayer(bob);
   const a = await client(url, alice);
   const b = await client(url, bob);
   await emitAck(a, "wait.heartbeat", { sessionId: "wait-a", agent: "codex", active: true });
@@ -39,9 +41,11 @@ test("two clients match, finish a rated game, and receive rating updates", async
 });
 
 test("agent completion locks the next queue but does not pause current game", async () => {
-  const { server, url } = await startTestServer();
-  const alice = player("alice");
-  const bob = player("bob");
+  const { server, url, store } = await startTestServer();
+  const alice = signedPlayer("alice");
+  const bob = signedPlayer("bob");
+  await store.upsertPlayer(alice);
+  await store.upsertPlayer(bob);
   const a = await client(url, alice);
   const b = await client(url, bob);
   await emitAck(a, "wait.heartbeat", { sessionId: "wait-a", agent: "codex", active: true });
@@ -61,8 +65,9 @@ test("agent completion locks the next queue but does not pause current game", as
 });
 
 test("bot fallback starts an unrated game when lobby is empty", async () => {
-  const { server, url } = await startTestServer({ botFallbackMs: 20, botMoveMs: 20 });
-  const alice = player("alice");
+  const { server, url, store } = await startTestServer({ botFallbackMs: 20, botMoveMs: 20 });
+  const alice = signedPlayer("alice");
+  await store.upsertPlayer(alice);
   const a = await client(url, alice);
   await emitAck(a, "wait.heartbeat", { sessionId: "wait-a", agent: "codex", active: true });
   const started = onceSocket<GameState>(a, "game.started");
@@ -85,9 +90,11 @@ test("bot fallback starts an unrated game when lobby is empty", async () => {
 });
 
 test("players can send in-game reactions and quick chat", async () => {
-  const { server, url } = await startTestServer();
-  const alice = player("alice");
-  const bob = player("bob");
+  const { server, url, store } = await startTestServer();
+  const alice = signedPlayer("alice");
+  const bob = signedPlayer("bob");
+  await store.upsertPlayer(alice);
+  await store.upsertPlayer(bob);
   const a = await client(url, alice);
   const b = await client(url, bob);
   await emitAck(a, "wait.heartbeat", { sessionId: "wait-a", agent: "codex", active: true });
@@ -102,7 +109,7 @@ test("players can send in-game reactions and quick chat", async () => {
   const reactionPayload = await reaction;
   assert.equal(reactionPayload.gameId, game.gameId);
   assert.equal(reactionPayload.playerId, alice.playerId);
-  assert.equal(reactionPayload.handle, "alice");
+  assert.equal(reactionPayload.handle, "@alice");
   assert.equal(reactionPayload.reaction, "💀");
 
   const chat = onceSocket<{ message: string; playerId: string }>(a, "chat.received");
@@ -113,6 +120,16 @@ test("players can send in-game reactions and quick chat", async () => {
 
   a.disconnect();
   b.disconnect();
+  await server.stop();
+});
+
+test("rated queue requires X login", async () => {
+  const { server, url } = await startTestServer();
+  const alice = player("alice");
+  const a = await client(url, alice);
+  await emitAck(a, "wait.heartbeat", { sessionId: "wait-a", agent: "codex", active: true });
+  await assert.rejects(() => emitAck(a, "queue.join", { sessionId: "wait-a" }), /Sign in with X/);
+  a.disconnect();
   await server.stop();
 });
 
@@ -207,14 +224,15 @@ test("default store persists players across reopen", async () => {
 });
 
 async function startTestServer(options: { botFallbackMs?: number; botMoveMs?: number } = {}) {
+  const store = new JsonFileStore();
   const server = new MachiaiServer({
-    store: new JsonFileStore(),
+    store,
     botFallbackMs: options.botFallbackMs ?? 1000,
     botMoveMs: options.botMoveMs ?? 20,
     reconnectGraceMs: 20,
   });
   const url = await server.start(0);
-  return { server, url };
+  return { server, url, store };
 }
 
 function player(displayName: string): PlayerProfile {
@@ -228,6 +246,17 @@ function player(displayName: string): PlayerProfile {
     ratedGames: 0,
     createdAt: now,
     updatedAt: now,
+  };
+}
+
+function signedPlayer(displayName: string): PlayerProfile {
+  const base = player(displayName);
+  return {
+    ...base,
+    displayName: `@${displayName}`,
+    twitterHandle: displayName,
+    xUserId: `x_${displayName}`,
+    authToken: `test_token_${displayName}`,
   };
 }
 

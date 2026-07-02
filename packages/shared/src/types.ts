@@ -21,6 +21,9 @@ export interface PlayerProfile {
   handle: string;
   displayName?: string;
   twitterHandle?: string;
+  xUserId?: string;
+  authToken?: string;
+  profileImageUrl?: string;
   mmr: number;
   ratedGames: number;
   createdAt: string;
