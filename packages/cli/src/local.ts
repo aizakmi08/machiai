@@ -79,6 +79,13 @@ export function updateProfile(displayName?: string): PlayerProfile {
   return state.profile;
 }
 
+export function saveProfile(profile: PlayerProfile): PlayerProfile {
+  const state = loadState();
+  state.profile = { ...state.profile, ...profile, updatedAt: profile.updatedAt ?? new Date().toISOString() };
+  saveState(state);
+  return state.profile;
+}
+
 export function createLocalWaitSession(input: { agent: string; workspace?: string; goal?: string }): WaitSession {
   const state = loadState();
   const now = new Date().toISOString();

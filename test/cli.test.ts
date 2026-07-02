@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { loadState, saveProfile } from "../packages/cli/src/local.js";
 
 const cli = join(process.cwd(), "dist", "packages", "cli", "src", "cli.js");
 
@@ -43,6 +44,23 @@ test("profile command migrates old machiai handles to coder handles", () => {
   const saved = JSON.parse(readFileSync(join(home, "state.json"), "utf8")) as { profile: { handle: string } };
   assert.match(output, /Handle: coder-9153/);
   assert.equal(saved.profile.handle, "coder-9153");
+});
+
+test("saved rating survives local profile reload", () => {
+  const previousHome = process.env.MACHIAI_HOME;
+  const home = mkdtempSync(join(tmpdir(), "machiai-profile-rating-"));
+  process.env.MACHIAI_HOME = home;
+  try {
+    const initial = loadState().profile;
+    saveProfile({ ...initial, mmr: 612, ratedGames: 4, updatedAt: new Date().toISOString() });
+    const reloaded = loadState().profile;
+    assert.equal(reloaded.mmr, 612);
+    assert.equal(reloaded.ratedGames, 4);
+    assert.equal(reloaded.playerId, initial.playerId);
+  } finally {
+    if (previousHome === undefined) delete process.env.MACHIAI_HOME;
+    else process.env.MACHIAI_HOME = previousHome;
+  }
 });
 
 test("mcp-config prints npx config", () => {

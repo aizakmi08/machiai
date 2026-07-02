@@ -104,6 +104,25 @@ test("presence counts unique online players", async () => {
   await server.stop();
 });
 
+test("auth preserves existing server rating when client profile is stale", async () => {
+  const store = new JsonFileStore();
+  const server = new MachiaiServer({ store, botFallbackMs: 1000, reconnectGraceMs: 20 });
+  const url = await server.start(0);
+  const saved = { ...player("alice"), mmr: 640, ratedGames: 9 };
+  await store.upsertPlayer(saved);
+
+  const stale = { ...saved, displayName: "alice-new", mmr: STARTING_MMR, ratedGames: 0 };
+  const socket = io(url, { transports: ["websocket", "polling"] });
+  await onceSocket(socket, "connect");
+  const response = (await emitAck(socket, "auth.anonymous", stale)) as { player: PlayerProfile };
+
+  assert.equal(response.player.mmr, 640);
+  assert.equal(response.player.ratedGames, 9);
+  assert.equal(response.player.displayName, "alice-new");
+  socket.disconnect();
+  await server.stop();
+});
+
 test("public HTTP endpoints expose server status", async () => {
   const { server, url } = await startTestServer();
   const root = await fetch(new URL("/", url));

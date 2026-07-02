@@ -119,8 +119,13 @@ export function App() {
       socket.on("connect", () => {
         setConnection("online");
         void emitAck(socket, "auth.anonymous", nextBootstrap.profile)
-          .then((response) => {
-            if (isAuthAck(response)) setPresence(response.presence);
+          .then(async (response) => {
+            if (isAuthAck(response)) {
+              profileRef.current = response.player;
+              setProfile(response.player);
+              setPresence(response.presence);
+              await window.machiaiOverlay.saveProfile(response.player);
+            }
             return syncWait(nextBootstrap.detection);
           })
           .catch((error) => setMessage(errorMessage(error)));
@@ -156,6 +161,8 @@ export function App() {
         setMessage(resultMessage(nextGame, nextBootstrap.profile.playerId));
       });
       socket.on("rating.updated", (payload: { player: PlayerProfile; rating: { delta: number } }) => {
+        void window.machiaiOverlay.saveProfile(payload.player).catch((error) => setMessage(errorMessage(error)));
+        profileRef.current = payload.player;
         setProfile(payload.player);
         setRatingDelta(payload.rating.delta);
       });

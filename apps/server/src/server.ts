@@ -82,14 +82,16 @@ export class MachiaiServer {
 
   private async onAuth(socket: Socket, payload: Partial<PlayerProfile>, ack?: (value: unknown) => void): Promise<void> {
     const now = new Date().toISOString();
+    const playerId = payload.playerId ?? createId("player");
+    const existing = await this.requiredStore().getPlayer(playerId);
     const player: PlayerProfile = {
-      playerId: payload.playerId ?? createId("player"),
-      deviceKey: payload.deviceKey ?? createId("device"),
-      handle: payload.handle ?? createHandle(),
-      displayName: payload.displayName,
-      mmr: payload.mmr ?? STARTING_MMR,
-      ratedGames: payload.ratedGames ?? 0,
-      createdAt: payload.createdAt ?? now,
+      playerId,
+      deviceKey: payload.deviceKey ?? existing?.deviceKey ?? createId("device"),
+      handle: payload.handle ?? existing?.handle ?? createHandle(),
+      displayName: payload.displayName ?? existing?.displayName,
+      mmr: existing?.mmr ?? payload.mmr ?? STARTING_MMR,
+      ratedGames: existing?.ratedGames ?? payload.ratedGames ?? 0,
+      createdAt: existing?.createdAt ?? payload.createdAt ?? now,
       updatedAt: now,
     };
     await this.requiredStore().upsertPlayer(player);

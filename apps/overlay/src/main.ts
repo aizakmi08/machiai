@@ -6,9 +6,9 @@ import { fileURLToPath } from "node:url";
 import { app, BrowserWindow, ipcMain, screen, type Rectangle } from "electron";
 import { MachiaiServer } from "../../server/src/server.js";
 import { detectAgentActivity } from "../../../packages/cli/src/agent-detector.js";
-import { activeLocalWaitSession, loadState, machiaiHome, updateProfile } from "../../../packages/cli/src/local.js";
+import { activeLocalWaitSession, loadState, machiaiHome, saveProfile, updateProfile } from "../../../packages/cli/src/local.js";
 import { serverUrl } from "../../../packages/cli/src/config.js";
-import type { OverlayBootstrap, SnapResult } from "../../../packages/shared/src/index.js";
+import type { OverlayBootstrap, PlayerProfile, SnapResult } from "../../../packages/shared/src/index.js";
 
 const execFileAsync = promisify(execFile);
 const here = dirname(fileURLToPath(import.meta.url));
@@ -103,6 +103,7 @@ function registerIpc(): void {
 
   ipcMain.handle("machiai:detect-agent", async () => detectAgentActivity());
   ipcMain.handle("machiai:update-profile", (_event, displayName: string) => updateProfile(displayName.trim()));
+  ipcMain.handle("machiai:save-profile", (_event, profile: PlayerProfile) => saveProfile(profile));
   ipcMain.handle("machiai:snap", async (): Promise<SnapResult> => snapWindow());
 }
 

@@ -2,6 +2,7 @@ import readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { io, type Socket } from "socket.io-client";
 import { formatGameLine, renderBoard, type GameState, type PlayerProfile, type WaitSession } from "../../shared/src/index.js";
+import { saveProfile } from "./local.js";
 import { printAgentFinished } from "./ui.js";
 
 export interface OnlinePlayOptions {
@@ -15,7 +16,8 @@ export interface OnlinePlayOptions {
 export async function playOnline(options: OnlinePlayOptions): Promise<void> {
   const socket = io(options.serverUrl, { transports: ["websocket", "polling"], timeout: 5000 });
   await onceConnect(socket);
-  await emitAck(socket, "auth.anonymous", options.profile);
+  const auth = (await emitAck(socket, "auth.anonymous", options.profile)) as { player?: PlayerProfile };
+  if (auth.player) saveProfile(auth.player);
   await emitAck(socket, "wait.heartbeat", {
     sessionId: options.waitSession.sessionId,
     agent: options.waitSession.agent,
@@ -56,7 +58,8 @@ export async function playOnline(options: OnlinePlayOptions): Promise<void> {
     ended = true;
     renderOnlineGame(next, options.profile.playerId, options.ascii);
   });
-  socket.on("rating.updated", (payload) => {
+  socket.on("rating.updated", (payload: { player?: PlayerProfile; rating: { oldMmr: number; newMmr: number; delta: number } }) => {
+    if (payload.player) saveProfile(payload.player);
     console.log(`Rating: ${payload.rating.oldMmr} -> ${payload.rating.newMmr} (${payload.rating.delta >= 0 ? "+" : ""}${payload.rating.delta})`);
   });
 
