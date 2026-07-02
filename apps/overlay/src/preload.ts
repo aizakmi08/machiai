@@ -10,6 +10,7 @@ export interface MachiaiOverlayApi {
   recordMatch(record: MatchRecord): Promise<MatchRecord>;
   ratingResult(gameId: string, mmrDelta: number, mmrAfter: number): Promise<MatchRecord | undefined>;
   listMatches(): Promise<MatchRecord[]>;
+  signOut(): Promise<PlayerProfile>;
   updateProfile(displayName: string, twitterHandle?: string): Promise<PlayerProfile>;
   saveProfile(profile: PlayerProfile): Promise<PlayerProfile>;
   openExternal(url: string): Promise<void>;
@@ -24,6 +25,7 @@ const api: MachiaiOverlayApi = {
   recordMatch: (record: MatchRecord) => ipcRenderer.invoke("machiai:record-match", record) as Promise<MatchRecord>,
   ratingResult: (gameId: string, mmrDelta: number, mmrAfter: number) => ipcRenderer.invoke("machiai:rating-result", gameId, mmrDelta, mmrAfter) as Promise<MatchRecord | undefined>,
   listMatches: () => ipcRenderer.invoke("machiai:list-matches") as Promise<MatchRecord[]>,
+  signOut: () => ipcRenderer.invoke("machiai:sign-out") as Promise<PlayerProfile>,
   updateProfile: (displayName: string, twitterHandle?: string) => ipcRenderer.invoke("machiai:update-profile", displayName, twitterHandle) as Promise<PlayerProfile>,
   saveProfile: (profile: PlayerProfile) => ipcRenderer.invoke("machiai:save-profile", profile) as Promise<PlayerProfile>,
   openExternal: (url: string) => ipcRenderer.invoke("machiai:open-external", url) as Promise<void>,

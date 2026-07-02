@@ -98,6 +98,41 @@ test("public server profile does not erase saved X auth", () => {
   }
 });
 
+test("server can explicitly clear stale X auth", () => {
+  const previousHome = process.env.MACHIAI_HOME;
+  const home = mkdtempSync(join(tmpdir(), "machiai-profile-auth-clear-"));
+  process.env.MACHIAI_HOME = home;
+  try {
+    const initial = loadState().profile;
+    saveProfile({
+      ...initial,
+      displayName: "@coder_dev",
+      twitterHandle: "coder_dev",
+      xUserId: "x_coder_dev",
+      authToken: "local_auth_token",
+      profileImageUrl: "https://example.com/avatar.jpg",
+      updatedAt: new Date().toISOString(),
+    });
+    saveProfile({
+      ...initial,
+      displayName: "@coder_dev",
+      twitterHandle: "coder_dev",
+      xUserId: undefined,
+      authToken: undefined,
+      profileImageUrl: undefined,
+      updatedAt: new Date().toISOString(),
+    });
+    const reloaded = loadState().profile;
+    assert.equal(reloaded.authToken, undefined);
+    assert.equal(reloaded.xUserId, undefined);
+    assert.equal(reloaded.profileImageUrl, undefined);
+    assert.equal(reloaded.twitterHandle, "coder_dev");
+  } finally {
+    if (previousHome === undefined) delete process.env.MACHIAI_HOME;
+    else process.env.MACHIAI_HOME = previousHome;
+  }
+});
+
 test("profile command saves twitter handle", () => {
   const home = mkdtempSync(join(tmpdir(), "machiai-profile-twitter-"));
   const output = execFileSync(process.execPath, [cli, "profile", "--twitter", "https://x.com/coder_dev"], {

@@ -126,3 +126,22 @@ test("resolveReference: auto, session pin, and agent/surface filter", () => {
   assert.equal(res.matched, undefined);
   assert.equal(res.idleMatch?.id, "idle-claude");
 });
+
+test("a transcript clearly newer than a Stop hook keeps the session running (resume after stop)", () => {
+  const claude: AgentSessionSummary[] = [
+    { id: "s4", agent: "claude", surface: "terminal", state: "running", lastEventAt: ago(500), signal: "transcript" },
+  ];
+  const hooks: HookEvent[] = [{ agent: "claude", event: "Stop", sessionId: "s4", ts: ago(9_000) }];
+  const [s] = buildRegistry({ now, claude, hooks });
+  assert.equal(s.state, "running"); // live activity newer than a stale Stop wins, so the user isn't locked out
+});
+
+test("Auto pick is deterministic and order-independent for concurrent agents (no headline flicker)", () => {
+  const at = ago(1_000);
+  const codex: AgentSessionSummary = { id: "c", agent: "codex", surface: "app", state: "running", lastEventAt: at, signal: "transcript" };
+  const claude: AgentSessionSummary = { id: "l", agent: "claude", surface: "terminal", state: "running", lastEventAt: at, signal: "transcript" };
+  const a = resolveReference([codex, claude], { kind: "auto" });
+  const b = resolveReference([claude, codex], { kind: "auto" });
+  assert.equal(a.matched?.id, b.matched?.id); // same pick regardless of input order
+  assert.equal(a.matched?.agent, "claude"); // stable tiebreak within the sticky window
+});

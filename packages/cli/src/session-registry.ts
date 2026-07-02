@@ -28,6 +28,8 @@ export const TRANSCRIPT_RUNNING_TTL_MS = 5 * 60 * 1000;
 export const HOOK_RUNNING_TTL_MS = 5 * 60 * 1000;
 /** Two sources within this window are "simultaneous"; the stronger signal decides state, not recency. */
 export const SIGNAL_TIE_MS = 3_000;
+/** Auto keeps its pick stable within this window so concurrent agents don't swap the headline each poll. */
+export const AUTO_STICKY_MS = 3_000;
 /** Bytes read from the end of a transcript to find the latest turn boundary. */
 const TAIL_BYTES = 64 * 1024;
 /** Safety cap so a giant history never makes a scan slow. */
@@ -156,8 +158,17 @@ export function resolveReference(sessions: AgentSessionSummary[], selector: Refe
     const idleMatch = sessions.filter((s) => s.state === "idle").filter(matches)[0];
     return idleMatch ? { idleMatch } : {};
   }
-  // auto: newest running session; no running -> report newest idle for messaging
-  if (running[0]) return { matched: running[0] };
+  // auto: newest running session. Bucket lastEventAt so two near-simultaneous agents don't
+  // swap the pick every poll (that made the headline flicker codex<->claude); tiebreak stably.
+  if (running.length > 0) {
+    const pick = [...running].sort(
+      (a, b) =>
+        Math.floor(Date.parse(b.lastEventAt) / AUTO_STICKY_MS) - Math.floor(Date.parse(a.lastEventAt) / AUTO_STICKY_MS) ||
+        (a.agent < b.agent ? -1 : a.agent > b.agent ? 1 : 0) ||
+        (a.id < b.id ? -1 : 1),
+    )[0];
+    return { matched: pick };
+  }
   const idleMatch = sessions.find((s) => s.state === "idle");
   return idleMatch ? { idleMatch } : {};
 }

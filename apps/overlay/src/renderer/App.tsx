@@ -55,6 +55,7 @@ export function App() {
   const profileRef = useRef<PlayerProfile | undefined>(undefined);
   const gameStatusRef = useRef<GameState["status"] | undefined>(undefined);
   const gameIdRef = useRef<string | undefined>(undefined); // the current/just-ended game, for rating correlation
+  const messageAtRef = useRef(0); // when `message` last changed, so fresh feedback beats the ambient hint
   const [bootstrap, setBootstrap] = useState<OverlayBootstrap | undefined>();
   const [profile, setProfile] = useState<PlayerProfile | undefined>();
   const [editingName, setEditingName] = useState(false);
@@ -208,7 +209,19 @@ export function App() {
       socket.on("queue.status", () => setQueue("searching"));
       socket.on("wait.locked", (error: MachiaiError) => {
         setQueue("idle");
-        setMessage(error.message);
+        if (error?.code === "auth_required") {
+          // The server no longer recognizes our X token (e.g. it restarted). Return to signed-out UI.
+          void window.machiaiOverlay
+            .signOut()
+            .then((cleared) => {
+              profileRef.current = cleared;
+              setProfile(cleared);
+            })
+            .catch(() => {});
+          setMessage("Your X sign-in expired — sign in with X again to play.");
+        } else {
+          setMessage(error.message);
+        }
       });
       socket.on("game.started", (nextGame: GameState) => {
         gameIdRef.current = nextGame.gameId;
@@ -287,6 +300,10 @@ export function App() {
     return () => window.clearInterval(timer);
   }, []);
 
+  useEffect(() => {
+    messageAtRef.current = Date.now();
+  }, [message]);
+
   const canQueue = detection?.status === "active" && connection === "online" && queue === "idle" && game?.status !== "active";
   const signedIn = isTwitterAuthenticated(profile);
   const board = useMemo(() => parseFen(game?.fen ?? START_FEN), [game?.fen]);
@@ -323,23 +340,28 @@ export function App() {
   const resultTone = game?.status === "ended" ? resultForPlayerColor(game, playerColor) : "none";
   const lastMoveLabel = lastMove ? `${lastMove.color === playerColor ? "You" : "Last"}: ${lastMove.san}` : "";
   const pendingPremoveLabel = premove ? `Premove: ${premove.from}-${premove.to}` : "";
-  const footerText = agentFinished
-    ? "Agent finished — you can finish this game, but not start a new one."
-    : queue === "searching"
-      ? "Searching… a bot joins if the lobby is empty."
-      : game?.status === "ended"
-        ? message
-        : game?.status === "active"
-          ? lastMoveLabel || "Your move."
-          : detection?.status === "active"
-            ? signedIn
-              ? `${detection.agent ?? "Agent"} is running — press Start game.`
-              : `${detection.agent ?? "An agent"} is running — sign in with X to play.`
-            : detection?.status === "maybe"
-              ? "Agent is idle — send it a prompt to unlock a new game."
-              : detection?.status === "inactive"
-                ? "No agent running. Start Claude or Codex, then press Start."
-                : message;
+  // A recently-set message (errors, "Finding…", results, sign-in prompts) must win over the ambient
+  // detection hint — otherwise feedback like an auth rejection is silently overwritten and Start "does nothing".
+  const messageFresh = message !== "" && message !== "Opening Machiai." && Date.now() - messageAtRef.current < 6000;
+  const footerText = messageFresh
+    ? message
+    : agentFinished
+      ? "Agent finished — you can finish this game, but not start a new one."
+      : queue === "searching"
+        ? "Searching… a bot joins if the lobby is empty."
+        : game?.status === "ended"
+          ? message
+          : game?.status === "active"
+            ? lastMoveLabel || "Your move."
+            : detection?.status === "active"
+              ? signedIn
+                ? `${detection.agent ?? "Agent"} is running — press Start game.`
+                : `${detection.agent ?? "An agent"} is running — sign in with X to play.`
+              : detection?.status === "maybe"
+                ? "Agent is idle — send it a prompt to unlock a new game."
+                : detection?.status === "inactive"
+                  ? "No agent running. Start Claude or Codex, then press Start."
+                  : message;
 
   useEffect(() => {
     if (!premove || !game || game.status !== "active" || game.turn !== playerColor || movePending) return;

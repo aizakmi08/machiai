@@ -1,8 +1,9 @@
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { machiaiHome } from "./local.js";
 import { hasFlag, readOption } from "./config.js";
 
 const require = createRequire(import.meta.url);
@@ -34,7 +35,8 @@ export async function startOverlayApp(args: string[], options: OverlayLaunchOpti
   }
 
   const electronPath = require("electron") as string;
-  const child = spawn(electronPath, [mainPath], {
+  const launcherDir = ensureElectronLauncher(mainPath);
+  const child = spawn(electronPath, [launcherDir], {
     stdio: waitForExit ? "inherit" : "ignore",
     detached: !waitForExit,
     env: {
@@ -56,6 +58,23 @@ export async function startOverlayApp(args: string[], options: OverlayLaunchOpti
       else resolve();
     });
   });
+}
+
+function ensureElectronLauncher(mainPath: string): string {
+  const launcherDir = resolve(machiaiHome(), "electron-launcher");
+  mkdirSync(launcherDir, { recursive: true });
+  writeFileSync(
+    resolve(launcherDir, "package.json"),
+    JSON.stringify(
+      {
+        name: "machiai-overlay-launcher",
+        main: mainPath,
+      },
+      null,
+      2,
+    ),
+  );
+  return launcherDir;
 }
 
 function validateRendererBundle(rendererPath: string): void {

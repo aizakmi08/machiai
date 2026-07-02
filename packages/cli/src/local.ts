@@ -112,11 +112,23 @@ export function saveProfile(profile: PlayerProfile): PlayerProfile {
     ...state.profile,
     ...profile,
     twitterHandle: "twitterHandle" in profile ? profile.twitterHandle : state.profile.twitterHandle,
-    xUserId: profile.xUserId ?? state.profile.xUserId,
-    authToken: profile.authToken ?? state.profile.authToken,
-    profileImageUrl: profile.profileImageUrl ?? state.profile.profileImageUrl,
+    xUserId: "xUserId" in profile ? profile.xUserId : state.profile.xUserId,
+    authToken: "authToken" in profile ? profile.authToken : state.profile.authToken,
+    profileImageUrl: "profileImageUrl" in profile ? profile.profileImageUrl : state.profile.profileImageUrl,
     updatedAt: profile.updatedAt ?? new Date().toISOString(),
   };
+  saveState(state);
+  return state.profile;
+}
+
+/** Drop the stored X auth so the UI returns to a signed-out state (e.g. server no longer knows the token). */
+export function clearAuth(): PlayerProfile {
+  const state = loadState();
+  const profile = { ...state.profile };
+  delete profile.authToken;
+  delete profile.xUserId;
+  profile.updatedAt = new Date().toISOString();
+  state.profile = profile;
   saveState(state);
   return state.profile;
 }

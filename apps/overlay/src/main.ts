@@ -9,6 +9,7 @@ import { detectAgentActivity } from "../../../packages/cli/src/agent-detector.js
 import {
   activeLocalWaitSession,
   attachMatchRating,
+  clearAuth,
   loadState,
   machiaiHome,
   recentMatches,
@@ -123,6 +124,7 @@ function registerIpc(): void {
   ipcMain.handle("machiai:list-matches", () => recentMatches());
   ipcMain.handle("machiai:update-profile", (_event, displayName: string, twitterHandle?: string) => updateProfile(displayName.trim(), twitterHandle));
   ipcMain.handle("machiai:save-profile", (_event, profile: PlayerProfile) => saveProfile(profile));
+  ipcMain.handle("machiai:sign-out", () => clearAuth());
   ipcMain.handle("machiai:open-external", async (_event, url: string): Promise<void> => {
     await shell.openExternal(url);
   });
