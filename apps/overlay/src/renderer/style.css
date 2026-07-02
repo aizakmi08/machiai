@@ -241,6 +241,16 @@ footer {
   justify-content: center;
 }
 
+.playArea {
+  width: min(100%, 610px);
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 62px;
+  align-items: center;
+  gap: 10px;
+}
+
 .boardFrame {
   width: min(100%, calc(100vh - 250px), 520px);
   max-height: 100%;
@@ -252,6 +262,7 @@ footer {
 
 .board {
   -webkit-app-region: no-drag;
+  position: relative;
   width: 100%;
   aspect-ratio: 1 / 1;
   align-self: center;
@@ -265,7 +276,12 @@ footer {
   background: #111;
 }
 
+.board.pending {
+  cursor: wait;
+}
+
 .square {
+  position: relative;
   min-width: 0;
   min-height: 0;
   display: grid;
@@ -287,7 +303,28 @@ footer {
   box-shadow: inset 0 0 0 3px #fff;
 }
 
+.square.lastMove {
+  box-shadow: inset 0 0 0 2px #fff;
+}
+
+.square.selected.lastMove {
+  box-shadow: inset 0 0 0 3px #fff;
+}
+
+.square.legalMove::after {
+  content: "";
+  position: absolute;
+  width: 22%;
+  aspect-ratio: 1 / 1;
+  border: 2px solid #fff;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.2);
+  pointer-events: none;
+}
+
 .piece {
+  position: relative;
+  z-index: 1;
   width: 100%;
   height: 100%;
   display: grid;
@@ -300,12 +337,144 @@ footer {
 
 .piece.white {
   color: #fff;
-  filter: drop-shadow(0 1px 1px #000);
+  text-shadow:
+    0 1px 0 #000,
+    1px 0 0 #000,
+    -1px 0 0 #000,
+    0 -1px 0 #000;
 }
 
 .piece.black {
+  color: #050505;
+  text-shadow:
+    0 1px 0 #fff,
+    1px 0 0 #fff,
+    -1px 0 0 #fff,
+    0 -1px 0 #fff,
+    0 2px 4px rgba(255, 255, 255, 0.35);
+}
+
+.resultBurst,
+.reactionFlash {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  z-index: 3;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.resultBurst {
+  min-width: 112px;
+  padding: 10px 14px;
+  border: 2px solid #fff;
+  border-radius: 999px;
+  color: #fff;
+  background: #000;
+  font-size: 20px;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-align: center;
+  text-transform: uppercase;
+  animation: result-pop 1200ms ease both;
+}
+
+.resultBurst.loss {
   color: #000;
-  filter: drop-shadow(0 1px 1px rgba(255, 255, 255, 0.35));
+  background: #fff;
+}
+
+.reactionFlash {
+  font-size: 52px;
+  animation: reaction-pop 1200ms ease both;
+}
+
+.sideRail {
+  -webkit-app-region: no-drag;
+  min-width: 0;
+  height: min(100%, calc(100vh - 250px));
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 8px;
+  align-self: center;
+}
+
+.moveHint {
+  min-height: 22px;
+  overflow: hidden;
+  color: #a5a5a5;
+  font-size: 10px;
+  font-weight: 750;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reactionStack {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+}
+
+.reactionStack button {
+  -webkit-app-region: no-drag;
+  width: 28px;
+  height: 28px;
+  border: 1px solid #333;
+  border-radius: 7px;
+  color: #fff;
+  background: #000;
+  cursor: pointer;
+}
+
+.reactionStack button:disabled,
+.chatBox input:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.chatBox {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) 24px;
+  gap: 6px;
+}
+
+.chatLog {
+  min-height: 0;
+  overflow: hidden;
+  color: #8f8f8f;
+  font-size: 10px;
+  line-height: 1.25;
+}
+
+.chatLog span {
+  color: #6f6f6f;
+}
+
+.chatLog p {
+  margin: 0 0 5px;
+}
+
+.chatLog b {
+  color: #fff;
+  font-weight: 800;
+}
+
+.chatBox form {
+  min-width: 0;
+}
+
+.chatBox input {
+  -webkit-app-region: no-drag;
+  width: 100%;
+  height: 24px;
+  border: 1px solid #333;
+  border-radius: 7px;
+  padding: 0 6px;
+  color: #fff;
+  background: #000;
+  font: inherit;
+  font-size: 10px;
 }
 
 .actions {
@@ -377,7 +546,66 @@ footer span {
   white-space: nowrap;
 }
 
+@keyframes result-pop {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.82);
+  }
+  18% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1.05);
+  }
+  100% {
+    opacity: 0.92;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+@keyframes reaction-pop {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -40%) scale(0.8);
+  }
+  20% {
+    opacity: 1;
+    transform: translate(-50%, -52%) scale(1.1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -74%) scale(1);
+  }
+}
+
 @media (max-width: 430px), (max-height: 560px) {
+  .playArea {
+    grid-template-columns: minmax(0, 1fr) 52px;
+    gap: 7px;
+  }
+
+  .sideRail {
+    gap: 6px;
+  }
+
+  .reactionStack {
+    gap: 4px;
+  }
+
+  .reactionStack button {
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    padding: 0;
+    font-size: 12px;
+  }
+
+  .chatLog {
+    display: none;
+  }
+
+  .chatBox {
+    grid-template-rows: 24px;
+  }
+
   .nameEditor {
     grid-template-columns: minmax(0, 1fr) 28px 28px;
     gap: 4px;

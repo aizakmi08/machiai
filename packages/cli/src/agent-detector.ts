@@ -36,10 +36,10 @@ export async function detectAgentActivity(options: AgentDetectionOptions = {}): 
   const activeCli = processNames.find((name) => ACTIVE_CLI_PROCESS_NAMES.has(name));
   if (activeCli) {
     return {
-      status: "active",
+      status: "maybe",
       source: "process",
       agent: activeCli,
-      reason: `${activeCli} is running as a terminal process.`,
+      reason: `${activeCli} is open, but Machiai cannot prove an agent is currently running.`,
       detectedAt: now.toISOString(),
     };
   }

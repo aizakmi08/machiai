@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Chess, type Square } from "chess.js";
 import { io, type Socket } from "socket.io-client";
 import type {
   AgentDetection,
@@ -31,6 +32,10 @@ const PIECES: Record<string, string> = {
 
 type QueueState = "idle" | "searching" | "in_game";
 type ConnectionState = "connecting" | "online" | "offline";
+type ChatMessage = { gameId: string; playerId: string; handle: string; message: string; createdAt: string };
+type ReactionMessage = { gameId: string; playerId: string; handle: string; reaction: string; createdAt: string };
+
+const REACTIONS = ["💀", "👀", "😂", "🤝"];
 
 export function App() {
   const socketRef = useRef<Socket | undefined>(undefined);
@@ -46,10 +51,14 @@ export function App() {
   const [queue, setQueue] = useState<QueueState>("idle");
   const [game, setGame] = useState<GameState | undefined>();
   const [selected, setSelected] = useState<string | undefined>();
+  const [movePending, setMovePending] = useState(false);
   const [message, setMessage] = useState("Opening Machiai.");
   const [agentFinished, setAgentFinished] = useState(false);
   const [ratingDelta, setRatingDelta] = useState<number | undefined>();
   const [presence, setPresence] = useState<PresenceState | undefined>();
+  const [chatInput, setChatInput] = useState("");
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [reaction, setReaction] = useState<ReactionMessage | undefined>();
   const [, setClockTick] = useState(0);
 
   const playerColor = useMemo(() => {
@@ -147,18 +156,23 @@ export function App() {
         setGame(nextGame);
         setQueue("in_game");
         setSelected(undefined);
+        setMovePending(false);
+        setChatMessages([]);
+        setReaction(undefined);
         setMessage("Game started.");
       });
       socket.on("game.state", (nextGame: GameState) => {
         setGame(nextGame);
         setQueue(nextGame.status === "active" ? "in_game" : "idle");
         setSelected(undefined);
+        setMovePending(false);
       });
       socket.on("game.ended", (nextGame: GameState) => {
         setGame(nextGame);
         setQueue("idle");
         setSelected(undefined);
-        setMessage(resultMessage(nextGame, nextBootstrap.profile.playerId));
+        setMovePending(false);
+        setMessage(resultMessage(nextGame, profileRef.current?.playerId ?? nextBootstrap.profile.playerId));
       });
       socket.on("rating.updated", (payload: { player: PlayerProfile; rating: { delta: number } }) => {
         void window.machiaiOverlay.saveProfile(payload.player).catch((error) => setMessage(errorMessage(error)));
@@ -167,6 +181,13 @@ export function App() {
         setRatingDelta(payload.rating.delta);
       });
       socket.on("presence.updated", (nextPresence: PresenceState) => setPresence(nextPresence));
+      socket.on("reaction.received", (payload: ReactionMessage) => {
+        setReaction(payload);
+        window.setTimeout(() => setReaction((current) => (current?.createdAt === payload.createdAt ? undefined : current)), 1800);
+      });
+      socket.on("chat.received", (payload: ChatMessage) => {
+        setChatMessages((items) => [...items.slice(-3), payload]);
+      });
       socket.on("error", (error: MachiaiError) => setMessage(error.message));
     });
 
@@ -190,6 +211,9 @@ export function App() {
   const canQueue = detection?.status === "active" && connection === "online" && queue === "idle" && game?.status !== "active";
   const board = useMemo(() => parseFen(game?.fen ?? START_FEN), [game?.fen]);
   const squares = useMemo(() => orientedSquares(playerColor), [playerColor]);
+  const lastMove = game?.moves.at(-1);
+  const legalTargets = useMemo(() => legalMovesFor(game?.fen, selected, game?.turn === playerColor && !movePending), [game?.fen, game?.turn, movePending, playerColor, selected]);
+  const canMoveNow = Boolean(game && game.status === "active" && game.turn === playerColor && !movePending);
   const topPlayerId = game ? (playerColor === "white" ? game.blackPlayerId : game.whitePlayerId) : undefined;
   const bottomPlayerId = game ? (playerColor === "white" ? game.whitePlayerId : game.blackPlayerId) : profile?.playerId;
   const topPlayer = labelForPlayer(topPlayerId, playerColor === "white" ? game?.blackHandle : game?.whiteHandle, profile, "Opponent");
@@ -198,6 +222,8 @@ export function App() {
   const bottomClock = game ? (playerColor === "white" ? game.clocks.whiteMs : game.clocks.blackMs) : 3 * 60 * 1000;
   const serverHost = bootstrap ? new URL(bootstrap.serverUrl).host : "server";
   const startLabel = connection !== "online" ? "Connecting" : detection?.status === "active" ? "Start" : "No agent";
+  const resultTone = game?.status === "ended" ? resultForPlayerColor(game, playerColor) : "none";
+  const lastMoveLabel = lastMove ? `${lastMove.color === playerColor ? "You" : "Last"}: ${lastMove.san}` : "No moves yet";
 
   async function joinQueue() {
     if (!canQueue || !detection || !profile) return;
@@ -258,19 +284,47 @@ export function App() {
 
   async function makeMove(from: string, to: string) {
     const socket = socketRef.current;
-    if (!socket || !game || game.status !== "active") return;
+    if (!socket || !game || game.status !== "active" || game.turn !== playerColor || movePending) return;
     const piece = board.get(from);
     const promotion = piece?.toLowerCase() === "p" && (to.endsWith("8") || to.endsWith("1")) ? "q" : "";
     try {
-      await emitAck(socket, "game.move", { gameId: game.gameId, move: `${from}${to}${promotion}` });
+      setMovePending(true);
+      const response = await emitAck<{ game: GameState }>(socket, "game.move", { gameId: game.gameId, move: `${from}${to}${promotion}` });
+      setGame(response.game);
       setSelected(undefined);
       setMessage("Move sent.");
+    } catch (error) {
+      setMovePending(false);
+      setMessage(errorMessage(error));
+    }
+  }
+
+  async function sendReaction(nextReaction: string) {
+    const socket = socketRef.current;
+    if (!socket || !game) return;
+    try {
+      await emitAck(socket, "reaction.send", { gameId: game.gameId, reaction: nextReaction });
     } catch (error) {
       setMessage(errorMessage(error));
     }
   }
 
+  async function sendChat() {
+    const socket = socketRef.current;
+    if (!socket || !game) return;
+    const nextMessage = chatInput.trim();
+    if (!nextMessage) return;
+    try {
+      setChatInput("");
+      await emitAck(socket, "chat.send", { gameId: game.gameId, message: nextMessage });
+    } catch (error) {
+      setChatInput(nextMessage);
+      setMessage(errorMessage(error));
+    }
+  }
+
   function onSquareClick(square: string) {
+    if (!canMoveNow) return;
     const piece = board.get(square);
     if (!selected) {
       if (isOwnPiece(piece, playerColor)) setSelected(square);
@@ -307,79 +361,120 @@ export function App() {
       </section>
 
       <section className="gamePanel">
-        <div className="boardFrame">
-          <section className="playerRow top">
-            <span>{topPlayer}</span>
-            <strong>{formatClock(liveClock(game, playerColor === "white" ? "black" : "white", topClock))}</strong>
-          </section>
+        <div className="playArea">
+          <div className="boardFrame">
+            <section className="playerRow top">
+              <span>{topPlayer}</span>
+              <strong>{formatClock(liveClock(game, playerColor === "white" ? "black" : "white", topClock))}</strong>
+            </section>
 
-          <section className="board" aria-label="Chess board">
-            {squares.map((square) => {
-              const piece = board.get(square);
-              const isSelected = selected === square;
-              return (
-                <button
-                  key={square}
-                  className={`square ${squareShade(square)} ${isSelected ? "selected" : ""}`}
-                  onClick={() => onSquareClick(square)}
-                  onDragOver={(event) => event.preventDefault()}
-                  onDrop={(event) => {
+            <section className={`board ${movePending ? "pending" : ""}`} aria-label="Chess board">
+              {squares.map((square) => {
+                const piece = board.get(square);
+                const isSelected = selected === square;
+                const isLegal = legalTargets.has(square);
+                const isLastMove = square === lastMove?.from || square === lastMove?.to;
+                return (
+                  <button
+                    key={square}
+                    className={`square ${squareShade(square)} ${isSelected ? "selected" : ""} ${isLegal ? "legalMove" : ""} ${isLastMove ? "lastMove" : ""}`}
+                    onClick={() => onSquareClick(square)}
+                    onDragOver={(event) => event.preventDefault()}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      const from = event.dataTransfer.getData("text/plain");
+                      if (from) void makeMove(from, square);
+                    }}
+                  >
+                    <span
+                      className={`piece ${pieceColor(piece) ?? ""}`}
+                      draggable={canMoveNow && isOwnPiece(piece, playerColor)}
+                      onDragStart={(event) => event.dataTransfer.setData("text/plain", square)}
+                    >
+                      {piece ? PIECES[piece] : ""}
+                    </span>
+                  </button>
+                );
+              })}
+              {resultTone !== "none" ? <div className={`resultBurst ${resultTone}`}>{resultTone}</div> : null}
+              {reaction ? <div className="reactionFlash">{reaction.reaction}</div> : null}
+            </section>
+
+            <section className="playerRow bottom">
+              {editingName ? (
+                <form
+                  className="nameEditor"
+                  onSubmit={(event) => {
                     event.preventDefault();
-                    const from = event.dataTransfer.getData("text/plain");
-                    if (from) void makeMove(from, square);
+                    void saveDisplayName();
                   }}
                 >
-                  <span
-                    className={`piece ${pieceColor(piece) ?? ""}`}
-                    draggable={isOwnPiece(piece, playerColor)}
-                    onDragStart={(event) => event.dataTransfer.setData("text/plain", square)}
+                  <input
+                    value={draftName}
+                    maxLength={24}
+                    onChange={(event) => setDraftName(event.currentTarget.value)}
+                    aria-label="Username"
+                  />
+                  <button type="submit" data-short="OK">
+                    Save
+                  </button>
+                  <button
+                    type="button"
+                    data-short="X"
+                    onClick={() => {
+                      setDraftName(profile ? displayNameForProfile(profile) : "");
+                      setEditingName(false);
+                    }}
                   >
-                    {piece ? PIECES[piece] : ""}
-                  </span>
-                </button>
-              );
-            })}
-          </section>
+                    Cancel
+                  </button>
+                </form>
+              ) : (
+                <span className="nameWithEdit">
+                  <span>{bottomPlayer}</span>
+                  <button type="button" onClick={() => setEditingName(true)}>
+                    Edit
+                  </button>
+                </span>
+              )}
+              <strong>{formatClock(liveClock(game, playerColor, bottomClock))}</strong>
+            </section>
+          </div>
 
-        <section className="playerRow bottom">
-          {editingName ? (
-            <form
-              className="nameEditor"
-              onSubmit={(event) => {
-                event.preventDefault();
-                void saveDisplayName();
-              }}
-            >
-              <input
-                value={draftName}
-                maxLength={24}
-                onChange={(event) => setDraftName(event.currentTarget.value)}
-                aria-label="Username"
-              />
-              <button type="submit" data-short="OK">
-                Save
-              </button>
-              <button
-                type="button"
-                data-short="X"
-                onClick={() => {
-                  setDraftName(profile ? displayNameForProfile(profile) : "");
-                  setEditingName(false);
+          <aside className="sideRail" aria-label="Game actions">
+            <div className="moveHint">{lastMoveLabel}</div>
+            <div className="reactionStack">
+              {REACTIONS.map((item) => (
+                <button key={item} type="button" disabled={!game} onClick={() => void sendReaction(item)}>
+                  {item}
+                </button>
+              ))}
+            </div>
+            <div className="chatBox">
+              <div className="chatLog">
+                {chatMessages.length === 0 ? <span>quick chat</span> : null}
+                {chatMessages.map((item) => (
+                  <p key={`${item.createdAt}-${item.playerId}`}>
+                    <b>{item.playerId === profile?.playerId ? "you" : item.handle}</b> {item.message}
+                  </p>
+                ))}
+              </div>
+              <form
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void sendChat();
                 }}
               >
-                Cancel
-              </button>
-            </form>
-          ) : (
-            <span className="nameWithEdit">
-              <span>{bottomPlayer}</span>
-              <button type="button" onClick={() => setEditingName(true)}>
-                Edit
-              </button>
-            </span>
-          )}
-          <strong>{formatClock(liveClock(game, playerColor, bottomClock))}</strong>
-        </section>
+                <input
+                  value={chatInput}
+                  maxLength={120}
+                  placeholder="say gg"
+                  disabled={!game}
+                  onChange={(event) => setChatInput(event.currentTarget.value)}
+                />
+              </form>
+            </div>
+          </aside>
         </div>
       </section>
 
@@ -433,6 +528,17 @@ function parseFen(fen: string): Map<string, string> {
     }
   }
   return map;
+}
+
+function legalMovesFor(fen: string | undefined, selected: string | undefined, enabled: boolean): Set<string> {
+  if (!fen || !selected || !enabled) return new Set();
+  try {
+    const chess = new Chess(fen);
+    const moves = chess.moves({ square: selected as Square, verbose: true }) as Array<{ to: string }>;
+    return new Set(moves.map((move) => move.to));
+  } catch {
+    return new Set();
+  }
 }
 
 function pieceColor(piece?: string): Color | undefined {
@@ -499,7 +605,15 @@ function resultMessage(game: GameState, playerId: string): string {
   if (game.result === "draw") return "Draw.";
   if (game.result === "aborted") return "Game aborted.";
   const won = (game.result === "white_win" && game.whitePlayerId === playerId) || (game.result === "black_win" && game.blackPlayerId === playerId);
+  if (game.mode === "bot") return won ? "Bot beaten. Practice game, no MMR change." : "Bot practice lost. No MMR change.";
   return won ? "You won." : "You lost.";
+}
+
+function resultForPlayerColor(game: GameState | undefined, color: Color): "win" | "loss" | "draw" | "none" {
+  if (!game?.result || game.result === "aborted") return "none";
+  if (game.result === "draw") return "draw";
+  if (game.result === "white_win") return color === "white" ? "win" : "loss";
+  return color === "black" ? "win" : "loss";
 }
 
 function errorMessage(error: unknown): string {

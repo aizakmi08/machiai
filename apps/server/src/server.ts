@@ -13,6 +13,7 @@ import {
   createHandle,
   createId,
   resignGame,
+  tickClock,
   type GameState,
   type PlayerProfile,
   type PresenceState,
@@ -25,6 +26,7 @@ export interface MachiaiServerOptions {
   store?: MachiaiStore;
   storePath?: string;
   botFallbackMs?: number;
+  botMoveMs?: number;
   reconnectGraceMs?: number;
 }
 
@@ -37,7 +39,9 @@ export class MachiaiServer {
   private readonly socketsByPlayer = new Map<string, Set<string>>();
   private readonly disconnectTimers = new Map<string, NodeJS.Timeout>();
   private readonly botTimers = new Map<string, NodeJS.Timeout>();
+  private readonly botMoveTimers = new Map<string, NodeJS.Timeout>();
   private readonly botFallbackMs: number;
+  private readonly botMoveMs: number;
   private readonly reconnectGraceMs: number;
 
   constructor(private readonly options: MachiaiServerOptions = {}) {
@@ -48,6 +52,7 @@ export class MachiaiServer {
       cors: { origin: "*" },
     });
     this.botFallbackMs = options.botFallbackMs ?? BOT_FALLBACK_MS;
+    this.botMoveMs = options.botMoveMs ?? 650;
     this.reconnectGraceMs = options.reconnectGraceMs ?? RECONNECT_GRACE_MS;
   }
 
@@ -61,6 +66,7 @@ export class MachiaiServer {
 
   async stop(): Promise<void> {
     for (const timer of this.botTimers.values()) clearTimeout(timer);
+    for (const timer of this.botMoveTimers.values()) clearTimeout(timer);
     for (const timer of this.disconnectTimers.values()) clearTimeout(timer);
     await new Promise<void>((resolve) => this.io.close(() => resolve()));
     await new Promise<void>((resolve) => this.http.close(() => resolve()));
@@ -76,6 +82,8 @@ export class MachiaiServer {
       socket.on("queue.leave", (_payload, ack) => void this.onQueueLeave(socket, ack));
       socket.on("game.move", (payload, ack) => void this.onGameMove(socket, payload, ack));
       socket.on("game.resign", (payload, ack) => void this.onGameResign(socket, payload, ack));
+      socket.on("reaction.send", (payload, ack) => void this.onReactionSend(socket, payload, ack));
+      socket.on("chat.send", (payload, ack) => void this.onChatSend(socket, payload, ack));
       socket.on("disconnect", () => void this.onDisconnect(socket));
     });
   }
@@ -180,13 +188,13 @@ export class MachiaiServer {
     try {
       const player = await this.requireSocketPlayer(socket);
       const game = await this.requireGame(payload.gameId);
-      let { game: next } = applyMove(game, player.playerId, payload.move);
-      if (next.mode === "bot" && next.status === "active" && next.turn === "black") {
-        next = applyMove(next, next.blackPlayerId, chooseBotMove(next.fen)).game;
-      }
+      const { game: next } = applyMove(game, player.playerId, payload.move);
       await this.requiredStore().upsertGame(next);
       this.io.to(`game:${next.gameId}`).emit("game.state", next);
       await this.finalizeGameIfNeeded(next);
+      if (next.mode === "bot" && next.status === "active" && next.turn === "black") {
+        this.scheduleBotMove(next.gameId);
+      }
       ack?.({ ok: true, game: next });
     } catch (error) {
       this.emitError(socket, error, ack);
@@ -198,10 +206,51 @@ export class MachiaiServer {
       const player = await this.requireSocketPlayer(socket);
       const game = await this.requireGame(payload.gameId);
       const next = resignGame(game, player.playerId);
+      this.clearBotMove(next.gameId);
       await this.requiredStore().upsertGame(next);
       this.io.to(`game:${next.gameId}`).emit("game.ended", next);
       await this.finalizeGameIfNeeded(next);
       ack?.({ ok: true, game: next });
+    } catch (error) {
+      this.emitError(socket, error, ack);
+    }
+  }
+
+  private async onReactionSend(socket: Socket, payload: { gameId: string; reaction: string }, ack?: (value: unknown) => void): Promise<void> {
+    try {
+      const player = await this.requireSocketPlayer(socket);
+      const game = await this.requireGame(payload.gameId);
+      this.assertPlayerInGame(game, player.playerId);
+      const reaction = String(payload.reaction ?? "").trim().slice(0, 4);
+      if (!reaction) throw new Error("Reaction is empty.");
+      this.io.to(`game:${game.gameId}`).emit("reaction.received", {
+        gameId: game.gameId,
+        playerId: player.playerId,
+        handle: player.displayName || player.handle,
+        reaction,
+        createdAt: new Date().toISOString(),
+      });
+      ack?.({ ok: true });
+    } catch (error) {
+      this.emitError(socket, error, ack);
+    }
+  }
+
+  private async onChatSend(socket: Socket, payload: { gameId: string; message: string }, ack?: (value: unknown) => void): Promise<void> {
+    try {
+      const player = await this.requireSocketPlayer(socket);
+      const game = await this.requireGame(payload.gameId);
+      this.assertPlayerInGame(game, player.playerId);
+      const message = String(payload.message ?? "").trim().replace(/\s+/g, " ").slice(0, 120);
+      if (!message) throw new Error("Message is empty.");
+      this.io.to(`game:${game.gameId}`).emit("chat.received", {
+        gameId: game.gameId,
+        playerId: player.playerId,
+        handle: player.displayName || player.handle,
+        message,
+        createdAt: new Date().toISOString(),
+      });
+      ack?.({ ok: true });
     } catch (error) {
       this.emitError(socket, error, ack);
     }
@@ -285,8 +334,30 @@ export class MachiaiServer {
     this.botTimers.set(playerId, timer);
   }
 
+  private scheduleBotMove(gameId: string): void {
+    this.clearBotMove(gameId);
+    const timer = setTimeout(() => void this.playBotMove(gameId), this.botMoveMs);
+    timer.unref?.();
+    this.botMoveTimers.set(gameId, timer);
+  }
+
+  private async playBotMove(gameId: string): Promise<void> {
+    this.botMoveTimers.delete(gameId);
+    const current = await this.requiredStore().getGame(gameId);
+    if (!current || current.status !== "active" || current.mode !== "bot" || current.turn !== "black") return;
+    const now = new Date();
+    let next = tickClock(current, now);
+    if (next.status === "active") {
+      next = applyMove(next, next.blackPlayerId, chooseBotMove(next.fen), now).game;
+    }
+    await this.requiredStore().upsertGame(next);
+    this.io.to(`game:${next.gameId}`).emit(next.status === "ended" ? "game.ended" : "game.state", next);
+    await this.finalizeGameIfNeeded(next);
+  }
+
   private async finalizeGameIfNeeded(game: GameState): Promise<void> {
     if (game.status !== "ended") return;
+    this.clearBotMove(game.gameId);
     const eventName = game.endReason === "resignation" || game.endReason === "timeout" || game.endReason === "disconnect" ? "game.ended" : "game.state";
     this.io.to(`game:${game.gameId}`).emit(eventName, game);
     if (!game.rated || !game.bothPlayersMoved || !game.result || game.result === "aborted" || this.finalizedRatings.has(game.gameId)) {
@@ -366,6 +437,12 @@ export class MachiaiServer {
     return game;
   }
 
+  private assertPlayerInGame(game: GameState, playerId: string): void {
+    if (game.whitePlayerId !== playerId && game.blackPlayerId !== playerId) {
+      throw new Error("Player is not in this game.");
+    }
+  }
+
   private trackSocket(playerId: string, socketId: string): void {
     const set = this.socketsByPlayer.get(playerId) ?? new Set<string>();
     set.add(socketId);
@@ -404,6 +481,13 @@ export class MachiaiServer {
     if (!timer) return;
     clearTimeout(timer);
     this.botTimers.delete(playerId);
+  }
+
+  private clearBotMove(gameId: string): void {
+    const timer = this.botMoveTimers.get(gameId);
+    if (!timer) return;
+    clearTimeout(timer);
+    this.botMoveTimers.delete(gameId);
   }
 
   private removeFromQueue(playerId: string): void {

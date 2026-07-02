@@ -16,13 +16,13 @@ test("active local wait sessions unlock the overlay", async () => {
   assert.equal(detection.sessionId, "wait_test");
 });
 
-test("terminal codex and claude processes are treated as active", async () => {
+test("terminal codex and claude processes are only maybe without a Machiai wait session", async () => {
   const codex = await detectAgentActivity({
     now,
     processNames: ["launchd", "codex"],
     state: stateWithSession(false),
   });
-  assert.equal(codex.status, "active");
+  assert.equal(codex.status, "maybe");
   assert.equal(codex.source, "process");
   assert.equal(codex.agent, "codex");
 
@@ -31,7 +31,7 @@ test("terminal codex and claude processes are treated as active", async () => {
     processNames: ["launchd", "claude"],
     state: stateWithSession(false),
   });
-  assert.equal(claude.status, "active");
+  assert.equal(claude.status, "maybe");
   assert.equal(claude.source, "process");
   assert.equal(claude.agent, "claude");
 });

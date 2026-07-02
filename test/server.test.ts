@@ -57,7 +57,7 @@ test("agent completion locks the next queue but does not pause current game", as
 });
 
 test("bot fallback starts an unrated game when lobby is empty", async () => {
-  const { server, url } = await startTestServer({ botFallbackMs: 20 });
+  const { server, url } = await startTestServer({ botFallbackMs: 20, botMoveMs: 20 });
   const alice = player("alice");
   const a = await client(url, alice);
   await emitAck(a, "wait.heartbeat", { sessionId: "wait-a", agent: "codex", active: true });
@@ -66,9 +66,47 @@ test("bot fallback starts an unrated game when lobby is empty", async () => {
   const game = await started;
   assert.equal(game.mode, "bot");
   assert.equal(game.rated, false);
+  const botReply = waitForGameState(a, (state) => state.gameId === game.gameId && state.moves.length === 2);
   const response = (await emitAck(a, "game.move", { gameId: game.gameId, move: "e2e4" })) as { game: GameState };
-  assert.equal(response.game.moves.length, 2);
+  assert.equal(response.game.moves.length, 1);
+  assert.equal(response.game.turn, "black");
+  const afterBot = await botReply;
+  assert.equal(afterBot.moves.length, 2);
+  assert.equal(afterBot.turn, "white");
+  assert.ok(afterBot.clocks.blackMs < response.game.clocks.blackMs);
   a.disconnect();
+  await server.stop();
+});
+
+test("players can send in-game reactions and quick chat", async () => {
+  const { server, url } = await startTestServer();
+  const alice = player("alice");
+  const bob = player("bob");
+  const a = await client(url, alice);
+  const b = await client(url, bob);
+  await emitAck(a, "wait.heartbeat", { sessionId: "wait-a", agent: "codex", active: true });
+  await emitAck(b, "wait.heartbeat", { sessionId: "wait-b", agent: "claude", active: true });
+  const started = onceSocket<GameState>(a, "game.started");
+  await emitAck(a, "queue.join", { sessionId: "wait-a" });
+  await emitAck(b, "queue.join", { sessionId: "wait-b" });
+  const game = await started;
+
+  const reaction = onceSocket<{ gameId: string; reaction: string; playerId: string; handle: string; createdAt: string }>(b, "reaction.received");
+  await emitAck(a, "reaction.send", { gameId: game.gameId, reaction: "💀" });
+  const reactionPayload = await reaction;
+  assert.equal(reactionPayload.gameId, game.gameId);
+  assert.equal(reactionPayload.playerId, alice.playerId);
+  assert.equal(reactionPayload.handle, "alice");
+  assert.equal(reactionPayload.reaction, "💀");
+
+  const chat = onceSocket<{ message: string; playerId: string }>(a, "chat.received");
+  await emitAck(b, "chat.send", { gameId: game.gameId, message: "gg after this?" });
+  const chatPayload = await chat;
+  assert.equal(chatPayload.playerId, bob.playerId);
+  assert.equal(chatPayload.message, "gg after this?");
+
+  a.disconnect();
+  b.disconnect();
   await server.stop();
 });
 
@@ -152,8 +190,13 @@ test("default store persists players across reopen", async () => {
   await reopened.close();
 });
 
-async function startTestServer(options: { botFallbackMs?: number } = {}) {
-  const server = new MachiaiServer({ store: new JsonFileStore(), botFallbackMs: options.botFallbackMs ?? 1000, reconnectGraceMs: 20 });
+async function startTestServer(options: { botFallbackMs?: number; botMoveMs?: number } = {}) {
+  const server = new MachiaiServer({
+    store: new JsonFileStore(),
+    botFallbackMs: options.botFallbackMs ?? 1000,
+    botMoveMs: options.botMoveMs ?? 20,
+    reconnectGraceMs: 20,
+  });
   const url = await server.start(0);
   return { server, url };
 }
@@ -191,6 +234,17 @@ function emitAck(socket: Socket, event: string, payload: unknown): Promise<unkno
 
 function onceSocket<T = unknown>(socket: Socket, event: string): Promise<T> {
   return new Promise((resolve) => socket.once(event, resolve as (...args: unknown[]) => void));
+}
+
+function waitForGameState(socket: Socket, predicate: (state: GameState) => boolean): Promise<GameState> {
+  return new Promise((resolve) => {
+    const onState = (state: GameState) => {
+      if (!predicate(state)) return;
+      socket.off("game.state", onState);
+      resolve(state);
+    };
+    socket.on("game.state", onState);
+  });
 }
 
 async function waitForPresence(url: string, expectedOnlinePlayers: number): Promise<PresenceState> {
