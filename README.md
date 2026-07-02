@@ -151,6 +151,14 @@ machiai server
 
 `/stats` exposes sockets, online players, queued players, auth sessions, timers, and rate-limit buckets for basic monitoring.
 
+Local scale check:
+
+```bash
+pnpm load:local
+```
+
+This starts a local server, connects 1,000 signed test clients, matches 50 games, sends real moves, checks presence/stats/leaderboard, and reconnects 100 clients without using production secrets.
+
 ## Friend Test
 
 After the hosted server is deployed and npm is published, both players use the normal command:

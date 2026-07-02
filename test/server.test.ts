@@ -248,10 +248,11 @@ test("public HTTP endpoints expose server status", async () => {
   assert.equal(((await root.json()) as { service: string; stats: string }).service, "machiai");
   assert.equal(((await health.json()) as { ok: boolean }).ok, true);
   assert.equal(((await presence.json()) as PresenceState).onlinePlayers, 0);
-  const statsPayload = (await stats.json()) as { ok: boolean; sockets: number; onlinePlayers: number; queuedPlayers: number };
+  const statsPayload = (await stats.json()) as { ok: boolean; sockets: number; onlinePlayers: number; queuedPlayers: number; gameTimeoutTimers: number };
   assert.equal(statsPayload.ok, true);
   assert.equal(statsPayload.onlinePlayers, 0);
   assert.equal(statsPayload.queuedPlayers, 0);
+  assert.equal(statsPayload.gameTimeoutTimers, 0);
   await server.stop();
 });
 

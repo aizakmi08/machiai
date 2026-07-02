@@ -68,6 +68,7 @@ The server has built-in per-socket rate limits for auth, profile updates, wait h
   "pendingAuthSessions": 0,
   "botFallbackTimers": 0,
   "botMoveTimers": 0,
+  "gameTimeoutTimers": 0,
   "disconnectTimers": 0,
   "rateBuckets": 3
 }
@@ -106,6 +107,15 @@ Before pushing Machiai to thousands of concurrent users:
 - Enable sticky WebSocket sessions at the load balancer.
 - Move queue/presence/rate-limit state to shared infrastructure when running more than one server instance.
 - Run a load test that covers connection churn, active games, bot fallback, reconnect grace, and leaderboard reads.
+
+Local scale checks:
+
+```bash
+pnpm load:smoke
+pnpm load:local
+```
+
+`pnpm load:local` builds the package, starts an in-process Machiai server, connects 1,000 signed test clients over WebSocket, sends wait heartbeats, matches 50 games, plays real moves, exercises `/presence`, `/stats`, `/leaderboard`, and reconnects 100 clients. It does not use production secrets or live X accounts.
 
 The npm client does not need to change for that architecture; `MACHIAI_SERVER_URL` can point users at the scaled server.
 

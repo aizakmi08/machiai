@@ -1,6 +1,6 @@
 {
   "name": "@aizakmi08/machiai",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "description": "Chess for people waiting on AI agents.",
   "type": "module",
   "packageManager": "pnpm@11.7.0",
@@ -31,6 +31,8 @@
     "serve": "tsx packages/cli/src/mcp.ts",
     "test": "node --test dist/test/*.test.js",
     "test:build": "pnpm build && pnpm test",
+    "load:smoke": "pnpm build && node scripts/load-test.mjs --clients 200 --matches 20 --churn 25",
+    "load:local": "pnpm build && node scripts/load-test.mjs --clients 1000 --matches 50 --churn 100",
     "smoke": "pnpm build && node dist/packages/cli/src/cli.js demo && MACHIAI_HOME=/tmp/machiai-smoke node dist/packages/cli/src/cli.js profile && node dist/packages/cli/src/cli.js mcp-config && node dist/packages/cli/src/cli.js app --smoke",
     "pack:dry": "pnpm pack --pack-destination /tmp",
     "prepack": "pnpm build",

@@ -798,6 +798,7 @@ export class MachiaiServer {
       pendingAuthSessions: [...this.xAuthSessions.values()].filter((session) => session.status === "pending").length,
       botFallbackTimers: this.botTimers.size,
       botMoveTimers: this.botMoveTimers.size,
+      gameTimeoutTimers: this.gameTimeoutTimers.size,
       disconnectTimers: this.disconnectTimers.size,
       rateBuckets: this.rateBuckets.size,
     };
