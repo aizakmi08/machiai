@@ -32,6 +32,7 @@ After the deploy completes:
 ```bash
 curl https://machiai-aizakmi08.onrender.com/health
 curl https://machiai-aizakmi08.onrender.com/presence
+curl https://machiai-aizakmi08.onrender.com/stats
 ```
 
 Expected health response:
@@ -50,6 +51,27 @@ Render Free tradeoffs:
 - The free filesystem is ephemeral, so ratings can reset after restarts.
 - WebSockets are supported and work for MVP multiplayer testing.
 
+## Runtime Guardrails
+
+The server has built-in per-socket rate limits for auth, profile updates, wait heartbeats, queue actions, moves, resigns, reactions, and chat. X auth start/poll HTTP endpoints are rate-limited by client IP. These limits are intentionally in-memory for V1, so they protect one server process and reset when that process restarts.
+
+`/stats` returns lightweight operational counters:
+
+```json
+{
+  "ok": true,
+  "service": "machiai",
+  "sockets": 1,
+  "onlinePlayers": 1,
+  "queuedPlayers": 0,
+  "pendingAuthSessions": 0,
+  "botFallbackTimers": 0,
+  "botMoveTimers": 0,
+  "disconnectTimers": 0,
+  "rateBuckets": 3
+}
+```
+
 ## Scale Readiness
 
 The included Render setup is good for public MVP testing and friend demos, but it is a single Socket.IO process with local SQLite persistence. Do not market that setup as thousands-ready.
@@ -59,7 +81,7 @@ Before pushing Machiai to thousands of concurrent users:
 - Move persistence to managed Postgres or another network database with backups.
 - Add a Socket.IO Redis adapter or equivalent shared pub/sub before running more than one server instance.
 - Enable sticky WebSocket sessions at the load balancer.
-- Add server-side rate limits for auth, queue joins, reactions, chat, and move events.
+- Move queue/presence/rate-limit state to shared infrastructure when running more than one server instance.
 - Run a load test that covers connection churn, active games, bot fallback, reconnect grace, and leaderboard reads.
 
 The npm client does not need to change for that architecture; `MACHIAI_SERVER_URL` can point users at the scaled server.

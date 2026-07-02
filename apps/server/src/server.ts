@@ -48,6 +48,29 @@ interface XAuthSession {
   error?: string;
 }
 
+interface RateLimitRule {
+  limit: number;
+  windowMs: number;
+}
+
+interface RateBucket {
+  count: number;
+  resetAtMs: number;
+}
+
+const RATE_LIMITS = {
+  auth: { limit: 12, windowMs: 60_000 },
+  profile: { limit: 20, windowMs: 60_000 },
+  waitHeartbeat: { limit: 180, windowMs: 60_000 },
+  queue: { limit: 24, windowMs: 60_000 },
+  move: { limit: 180, windowMs: 60_000 },
+  resign: { limit: 12, windowMs: 60_000 },
+  reaction: { limit: 16, windowMs: 10_000 },
+  chat: { limit: 8, windowMs: 10_000 },
+  xAuthStart: { limit: 8, windowMs: 60_000 },
+  xAuthPoll: { limit: 120, windowMs: 60_000 },
+} satisfies Record<string, RateLimitRule>;
+
 export class MachiaiServer {
   readonly http: HttpServer;
   readonly io: SocketServer;
@@ -59,6 +82,7 @@ export class MachiaiServer {
   private readonly botTimers = new Map<string, NodeJS.Timeout>();
   private readonly botMoveTimers = new Map<string, NodeJS.Timeout>();
   private readonly xAuthSessions = new Map<string, XAuthSession>();
+  private readonly rateBuckets = new Map<string, RateBucket>();
   private readonly botFallbackMs: number;
   private readonly botMoveMs: number;
   private readonly reconnectGraceMs: number;
@@ -94,15 +118,42 @@ export class MachiaiServer {
 
   private registerSocketHandlers(): void {
     this.io.on("connection", (socket) => {
-      socket.on("auth.anonymous", (payload, ack) => void this.onAuth(socket, payload, ack));
-      socket.on("profile.update", (payload, ack) => void this.onProfileUpdate(socket, payload, ack));
-      socket.on("wait.heartbeat", (payload, ack) => void this.onWaitHeartbeat(socket, payload, ack));
-      socket.on("queue.join", (payload, ack) => void this.onQueueJoin(socket, payload, ack));
-      socket.on("queue.leave", (_payload, ack) => void this.onQueueLeave(socket, ack));
-      socket.on("game.move", (payload, ack) => void this.onGameMove(socket, payload, ack));
-      socket.on("game.resign", (payload, ack) => void this.onGameResign(socket, payload, ack));
-      socket.on("reaction.send", (payload, ack) => void this.onReactionSend(socket, payload, ack));
-      socket.on("chat.send", (payload, ack) => void this.onChatSend(socket, payload, ack));
+      socket.on("auth.anonymous", (payload, ack) => {
+        if (this.rejectSocketRateLimit(socket, "auth.anonymous", RATE_LIMITS.auth, ack)) return;
+        void this.onAuth(socket, payload, ack);
+      });
+      socket.on("profile.update", (payload, ack) => {
+        if (this.rejectSocketRateLimit(socket, "profile.update", RATE_LIMITS.profile, ack)) return;
+        void this.onProfileUpdate(socket, payload, ack);
+      });
+      socket.on("wait.heartbeat", (payload, ack) => {
+        if (this.rejectSocketRateLimit(socket, "wait.heartbeat", RATE_LIMITS.waitHeartbeat, ack)) return;
+        void this.onWaitHeartbeat(socket, payload, ack);
+      });
+      socket.on("queue.join", (payload, ack) => {
+        if (this.rejectSocketRateLimit(socket, "queue", RATE_LIMITS.queue, ack)) return;
+        void this.onQueueJoin(socket, payload, ack);
+      });
+      socket.on("queue.leave", (_payload, ack) => {
+        if (this.rejectSocketRateLimit(socket, "queue", RATE_LIMITS.queue, ack)) return;
+        void this.onQueueLeave(socket, ack);
+      });
+      socket.on("game.move", (payload, ack) => {
+        if (this.rejectSocketRateLimit(socket, "game.move", RATE_LIMITS.move, ack)) return;
+        void this.onGameMove(socket, payload, ack);
+      });
+      socket.on("game.resign", (payload, ack) => {
+        if (this.rejectSocketRateLimit(socket, "game.resign", RATE_LIMITS.resign, ack)) return;
+        void this.onGameResign(socket, payload, ack);
+      });
+      socket.on("reaction.send", (payload, ack) => {
+        if (this.rejectSocketRateLimit(socket, "reaction.send", RATE_LIMITS.reaction, ack)) return;
+        void this.onReactionSend(socket, payload, ack);
+      });
+      socket.on("chat.send", (payload, ack) => {
+        if (this.rejectSocketRateLimit(socket, "chat.send", RATE_LIMITS.chat, ack)) return;
+        void this.onChatSend(socket, payload, ack);
+      });
       socket.on("disconnect", () => void this.onDisconnect(socket));
     });
   }
@@ -292,6 +343,7 @@ export class MachiaiServer {
 
   private async onDisconnect(socket: Socket): Promise<void> {
     const playerId = socket.data.playerId as string | undefined;
+    this.clearSocketRateBuckets(socket.id);
     if (!playerId) return;
     this.untrackSocket(playerId, socket.id);
     this.broadcastPresence();
@@ -445,10 +497,14 @@ export class MachiaiServer {
         health: "/health",
         presence: "/presence",
         leaderboard: "/leaderboard",
+        stats: "/stats",
       });
     }
     if (url.startsWith("/health")) {
       return this.json(res, { ok: true, service: "machiai", now: new Date().toISOString() });
+    }
+    if (url.startsWith("/stats")) {
+      return this.json(res, this.currentStats());
     }
     if (url.startsWith("/leaderboard")) {
       const entries = await this.requiredStore().listLeaderboard(25);
@@ -462,7 +518,7 @@ export class MachiaiServer {
     }
     if (url.startsWith("/auth/x/session/")) {
       const sessionId = decodeURIComponent(url.split("/auth/x/session/")[1]?.split(/[?#]/)[0] ?? "");
-      return this.pollXAuthSession(sessionId, res);
+      return this.pollXAuthSession(req, sessionId, res);
     }
     if (url.startsWith("/auth/x/callback")) {
       return this.completeXAuth(req, res);
@@ -476,6 +532,8 @@ export class MachiaiServer {
       res.statusCode = 405;
       return this.json(res, { ok: false, error: "method_not_allowed" });
     }
+    this.pruneRuntimeState();
+    if (this.rejectHttpRateLimit(req, res, "auth/x/start", RATE_LIMITS.xAuthStart)) return;
     const config = this.xAuthConfig(req);
     if (!config) {
       res.statusCode = 501;
@@ -513,7 +571,9 @@ export class MachiaiServer {
     return this.json(res, { ok: true, sessionId, authUrl: authUrl.toString() });
   }
 
-  private pollXAuthSession(sessionId: string, res: ServerResponse): void {
+  private pollXAuthSession(req: IncomingMessage, sessionId: string, res: ServerResponse): void {
+    this.pruneRuntimeState();
+    if (this.rejectHttpRateLimit(req, res, "auth/x/session", RATE_LIMITS.xAuthPoll)) return;
     const session = this.xAuthSessions.get(sessionId);
     if (!session) {
       res.statusCode = 404;
@@ -667,6 +727,23 @@ export class MachiaiServer {
     return presence;
   }
 
+  private currentStats(): Record<string, unknown> {
+    this.pruneRuntimeState();
+    return {
+      ok: true,
+      service: "machiai",
+      now: new Date().toISOString(),
+      sockets: this.io.sockets.sockets.size,
+      onlinePlayers: this.socketsByPlayer.size,
+      queuedPlayers: this.queue.length,
+      pendingAuthSessions: [...this.xAuthSessions.values()].filter((session) => session.status === "pending").length,
+      botFallbackTimers: this.botTimers.size,
+      botMoveTimers: this.botMoveTimers.size,
+      disconnectTimers: this.disconnectTimers.size,
+      rateBuckets: this.rateBuckets.size,
+    };
+  }
+
   private clearDisconnectTimer(playerId: string): void {
     const timer = this.disconnectTimers.get(playerId);
     if (!timer) return;
@@ -694,6 +771,64 @@ export class MachiaiServer {
     this.clearBotFallback(playerId);
   }
 
+  private rejectSocketRateLimit(socket: Socket, event: string, rule: RateLimitRule, ack?: (value: unknown) => void): boolean {
+    const key = `socket:${socket.id}:${event}`;
+    const result = this.consumeRateLimit(key, rule);
+    if (result.allowed) return false;
+    const payload = {
+      code: "rate_limited",
+      message: `Too many ${event} events. Try again in ${Math.ceil(result.retryAfterMs / 1000)}s.`,
+      retryAfterMs: result.retryAfterMs,
+    };
+    socket.emit("error", payload);
+    ack?.({ ok: false, error: payload });
+    return true;
+  }
+
+  private rejectHttpRateLimit(req: IncomingMessage, res: ServerResponse, event: string, rule: RateLimitRule): boolean {
+    const key = `http:${clientAddress(req)}:${event}`;
+    const result = this.consumeRateLimit(key, rule);
+    if (result.allowed) return false;
+    res.statusCode = 429;
+    res.setHeader("retry-after", String(Math.ceil(result.retryAfterMs / 1000)));
+    this.json(res, {
+      ok: false,
+      error: "rate_limited",
+      message: `Too many ${event} requests. Try again shortly.`,
+      retryAfterMs: result.retryAfterMs,
+    });
+    return true;
+  }
+
+  private consumeRateLimit(key: string, rule: RateLimitRule): { allowed: true } | { allowed: false; retryAfterMs: number } {
+    const now = Date.now();
+    const current = this.rateBuckets.get(key);
+    if (!current || current.resetAtMs <= now) {
+      this.rateBuckets.set(key, { count: 1, resetAtMs: now + rule.windowMs });
+      return { allowed: true };
+    }
+    current.count += 1;
+    if (current.count <= rule.limit) return { allowed: true };
+    return { allowed: false, retryAfterMs: Math.max(1, current.resetAtMs - now) };
+  }
+
+  private clearSocketRateBuckets(socketId: string): void {
+    const prefix = `socket:${socketId}:`;
+    for (const key of this.rateBuckets.keys()) {
+      if (key.startsWith(prefix)) this.rateBuckets.delete(key);
+    }
+  }
+
+  private pruneRuntimeState(): void {
+    const now = Date.now();
+    for (const [key, bucket] of this.rateBuckets) {
+      if (bucket.resetAtMs <= now) this.rateBuckets.delete(key);
+    }
+    for (const [sessionId, session] of this.xAuthSessions) {
+      if (now - session.createdAtMs > 15 * 60 * 1000) this.xAuthSessions.delete(sessionId);
+    }
+  }
+
   private emitError(socket: Socket, error: unknown, ack?: (value: unknown) => void): void {
     const message = error instanceof Error ? error.message : String(error);
     const payload = { code: "machiai_error", message };
@@ -716,6 +851,10 @@ function requestBaseUrl(req: IncomingMessage): string {
   const proto = String(req.headers["x-forwarded-proto"] ?? "http").split(",")[0].trim();
   const host = String(req.headers["x-forwarded-host"] ?? req.headers.host ?? "127.0.0.1");
   return `${proto}://${host}`;
+}
+
+function clientAddress(req: IncomingMessage): string {
+  return String(req.headers["x-forwarded-for"] ?? req.socket.remoteAddress ?? "unknown").split(",")[0].trim();
 }
 
 function randomBase64Url(bytes: number): string {

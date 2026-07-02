@@ -165,6 +165,19 @@ test("presence counts unique online players", async () => {
   await server.stop();
 });
 
+test("socket events are rate limited before they can spam the server", async () => {
+  const { server, url } = await startTestServer();
+  const alice = player("alice");
+  const socket = io(url, { transports: ["websocket", "polling"] });
+  await onceSocket(socket, "connect");
+  for (let i = 0; i < 12; i++) {
+    await emitAck(socket, "auth.anonymous", { ...alice, displayName: `alice-${i}` });
+  }
+  await assert.rejects(() => emitAck(socket, "auth.anonymous", alice), /Too many auth\.anonymous events/);
+  socket.disconnect();
+  await server.stop();
+});
+
 test("auth preserves existing server rating when client profile is stale", async () => {
   const store = new JsonFileStore();
   const server = new MachiaiServer({ store, botFallbackMs: 1000, reconnectGraceMs: 20 });
@@ -199,12 +212,18 @@ test("public HTTP endpoints expose server status", async () => {
   const root = await fetch(new URL("/", url));
   const health = await fetch(new URL("/health", url));
   const presence = await fetch(new URL("/presence", url));
+  const stats = await fetch(new URL("/stats", url));
   assert.equal(root.status, 200);
   assert.equal(health.status, 200);
   assert.equal(presence.status, 200);
-  assert.equal(((await root.json()) as { service: string }).service, "machiai");
+  assert.equal(stats.status, 200);
+  assert.equal(((await root.json()) as { service: string; stats: string }).service, "machiai");
   assert.equal(((await health.json()) as { ok: boolean }).ok, true);
   assert.equal(((await presence.json()) as PresenceState).onlinePlayers, 0);
+  const statsPayload = (await stats.json()) as { ok: boolean; sockets: number; onlinePlayers: number; queuedPlayers: number };
+  assert.equal(statsPayload.ok, true);
+  assert.equal(statsPayload.onlinePlayers, 0);
+  assert.equal(statsPayload.queuedPlayers, 0);
   await server.stop();
 });
 
