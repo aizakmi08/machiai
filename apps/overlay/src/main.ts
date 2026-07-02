@@ -92,7 +92,7 @@ function createWindow(): BrowserWindow {
 function registerIpc(): void {
   ipcMain.handle("machiai:bootstrap", async (): Promise<OverlayBootstrap> => {
     const state = loadState();
-    const detection = await detectAgentActivity({ state, trustVisibleAgentApps: true });
+    const detection = await detectAgentActivity({ state });
     return {
       profile: state.profile,
       serverUrl: await overlayServerUrl(),
@@ -101,7 +101,7 @@ function registerIpc(): void {
     };
   });
 
-  ipcMain.handle("machiai:detect-agent", async () => detectAgentActivity({ trustVisibleAgentApps: true }));
+  ipcMain.handle("machiai:detect-agent", async () => detectAgentActivity());
   ipcMain.handle("machiai:update-profile", (_event, displayName: string, twitterHandle?: string) => updateProfile(displayName.trim(), twitterHandle));
   ipcMain.handle("machiai:save-profile", (_event, profile: PlayerProfile) => saveProfile(profile));
   ipcMain.handle("machiai:open-external", async (_event, url: string): Promise<void> => {

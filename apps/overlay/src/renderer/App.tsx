@@ -580,7 +580,9 @@ export function App() {
             : queue === "searching"
               ? "Searching. Bot starts if lobby is empty."
               : signedIn || signingIn
-                ? message
+                ? detection?.status === "maybe"
+                  ? "Agent app detected. Use machiai run --overlay for rated unlock."
+                  : message
                 : "Sign in with X to play rated."}
         </span>
       </footer>
