@@ -65,6 +65,8 @@ export interface GameState {
   blackPlayerId: string;
   whiteHandle: string;
   blackHandle: string;
+  whiteMmr?: number;
+  blackMmr?: number;
   fen: string;
   pgn: string;
   turn: Color;

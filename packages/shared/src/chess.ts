@@ -8,6 +8,8 @@ export interface NewGameInput {
   blackPlayerId: string;
   whiteHandle: string;
   blackHandle: string;
+  whiteMmr?: number;
+  blackMmr?: number;
   now?: Date;
 }
 
@@ -28,6 +30,8 @@ export function createGame(input: NewGameInput): GameState {
     blackPlayerId: input.blackPlayerId,
     whiteHandle: input.whiteHandle,
     blackHandle: input.blackHandle,
+    whiteMmr: input.whiteMmr,
+    blackMmr: input.blackMmr,
     fen: chess.fen(),
     pgn: chess.pgn(),
     turn: "white",

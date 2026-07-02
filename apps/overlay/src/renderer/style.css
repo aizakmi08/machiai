@@ -47,10 +47,15 @@ footer {
 }
 
 .topbar {
-  padding-left: 70px;
+  position: relative;
+  justify-content: center;
+  padding-left: 0;
 }
 
 .topbar strong {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -62,6 +67,7 @@ footer {
 
 .topActions {
   -webkit-app-region: no-drag;
+  margin-left: auto;
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
@@ -83,21 +89,11 @@ footer {
   white-space: nowrap;
 }
 
-.iconButton,
 .primary,
 .secondary {
   -webkit-app-region: no-drag;
   border: 0;
   cursor: pointer;
-}
-
-.iconButton {
-  width: 30px;
-  height: 30px;
-  border: 1px solid #3a3a3a;
-  border-radius: 8px;
-  color: #fff;
-  background: #000;
 }
 
 .statusBar {
@@ -157,6 +153,7 @@ footer {
   white-space: nowrap;
 }
 
+.playerIdentity,
 .nameWithEdit {
   display: inline-flex;
   align-items: center;
@@ -168,6 +165,16 @@ footer {
 
 .nameWithEdit span {
   min-width: 0;
+}
+
+.playerIdentity em,
+.nameWithEdit em {
+  flex: 0 0 auto;
+  color: #8f8f8f;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 750;
+  white-space: nowrap;
 }
 
 .nameWithEdit button,
@@ -355,6 +362,7 @@ footer {
 }
 
 .resultBurst,
+.matchFound,
 .reactionFlash {
   position: absolute;
   inset: 50% auto auto 50%;
@@ -371,6 +379,21 @@ footer {
   color: #fff;
   background: #000;
   font-size: 20px;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-align: center;
+  text-transform: uppercase;
+  animation: result-pop 1200ms ease both;
+}
+
+.matchFound {
+  min-width: 142px;
+  padding: 10px 14px;
+  border: 2px solid #fff;
+  border-radius: 999px;
+  color: #000;
+  background: #fff;
+  font-size: 18px;
   font-weight: 900;
   letter-spacing: 0;
   text-align: center;
@@ -480,10 +503,15 @@ footer {
 .actions {
   -webkit-app-region: no-drag;
   min-height: 44px;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
 }
 
 .primary,
 .secondary {
+  grid-column: 2;
+  justify-self: center;
   height: 40px;
   min-width: 150px;
   padding: 0 18px;
@@ -504,8 +532,7 @@ footer {
 }
 
 .primary:focus,
-.secondary:focus,
-.iconButton:focus {
+.secondary:focus {
   outline: 1px solid #fff;
   outline-offset: 2px;
 }
@@ -517,6 +544,8 @@ footer {
 }
 
 .rating {
+  grid-column: 3;
+  justify-self: end;
   display: flex;
   align-items: center;
   gap: 7px;

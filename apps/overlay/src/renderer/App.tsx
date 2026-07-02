@@ -9,7 +9,6 @@ import type {
   OverlayBootstrap,
   PlayerProfile,
   PresenceState,
-  SnapResult,
 } from "../../../../packages/shared/src/index.js";
 
 const START_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
@@ -59,6 +58,7 @@ export function App() {
   const [chatInput, setChatInput] = useState("");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [reaction, setReaction] = useState<ReactionMessage | undefined>();
+  const [matchFound, setMatchFound] = useState(false);
   const [, setClockTick] = useState(0);
 
   const playerColor = useMemo(() => {
@@ -159,7 +159,9 @@ export function App() {
         setMovePending(false);
         setChatMessages([]);
         setReaction(undefined);
-        setMessage("Game started.");
+        setMatchFound(true);
+        window.setTimeout(() => setMatchFound(false), 1600);
+        setMessage(nextGame.mode === "bot" ? "Practice bot found. No MMR change." : "Game found.");
       });
       socket.on("game.state", (nextGame: GameState) => {
         setGame(nextGame);
@@ -218,6 +220,8 @@ export function App() {
   const bottomPlayerId = game ? (playerColor === "white" ? game.whitePlayerId : game.blackPlayerId) : profile?.playerId;
   const topPlayer = labelForPlayer(topPlayerId, playerColor === "white" ? game?.blackHandle : game?.whiteHandle, profile, "Opponent");
   const bottomPlayer = labelForPlayer(bottomPlayerId, playerColor === "white" ? game?.whiteHandle : game?.blackHandle, profile, "You");
+  const topMmr = game ? (playerColor === "white" ? game.blackMmr : game.whiteMmr) : undefined;
+  const bottomMmr = game ? (playerColor === "white" ? game.whiteMmr : game.blackMmr) : profile?.mmr;
   const topClock = game ? (playerColor === "white" ? game.clocks.blackMs : game.clocks.whiteMs) : 3 * 60 * 1000;
   const bottomClock = game ? (playerColor === "white" ? game.clocks.whiteMs : game.clocks.blackMs) : 3 * 60 * 1000;
   const serverHost = bootstrap ? new URL(bootstrap.serverUrl).host : "server";
@@ -254,11 +258,6 @@ export function App() {
     const socket = socketRef.current;
     if (!socket || !game || game.status !== "active") return;
     await emitAck(socket, "game.resign", { gameId: game.gameId });
-  }
-
-  async function snap() {
-    const result = (await window.machiaiOverlay.snap()) as SnapResult;
-    setMessage(result.reason ?? (result.ok ? "Window snapped." : "Could not snap window."));
   }
 
   async function saveDisplayName() {
@@ -349,9 +348,6 @@ export function App() {
           <span className="onlineCount" aria-label={`${presence?.onlinePlayers ?? 0} players online`}>
             {formatOnlineCount(presence?.onlinePlayers, connection)}
           </span>
-          <button className="iconButton" onClick={() => void snap()} title="Snap beside Codex, Claude, Cursor, or Terminal">
-            ⇱
-          </button>
         </div>
       </header>
 
@@ -364,7 +360,10 @@ export function App() {
         <div className="playArea">
           <div className="boardFrame">
             <section className="playerRow top">
-              <span>{topPlayer}</span>
+              <span className="playerIdentity">
+                <span>{topPlayer}</span>
+                {topMmr ? <em>{topMmr} MMR</em> : null}
+              </span>
               <strong>{formatClock(liveClock(game, playerColor === "white" ? "black" : "white", topClock))}</strong>
             </section>
 
@@ -397,6 +396,7 @@ export function App() {
                 );
               })}
               {resultTone !== "none" ? <div className={`resultBurst ${resultTone}`}>{resultTone}</div> : null}
+              {matchFound ? <div className="matchFound">Game found</div> : null}
               {reaction ? <div className="reactionFlash">{reaction.reaction}</div> : null}
             </section>
 
@@ -432,6 +432,7 @@ export function App() {
               ) : (
                 <span className="nameWithEdit">
                   <span>{bottomPlayer}</span>
+                  {bottomMmr ? <em>{bottomMmr} MMR</em> : null}
                   <button type="button" onClick={() => setEditingName(true)}>
                     Edit
                   </button>

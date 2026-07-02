@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import {
   STARTING_MMR,
+  botMmrForPlayer,
   createDeviceKey,
   createGame,
   createHandle,
@@ -143,6 +144,8 @@ export function createLocalBotGame(sessionId: string): GameState {
     blackPlayerId: "bot",
     whiteHandle: state.profile.displayName || state.profile.handle,
     blackHandle: "Machiai Bot",
+    whiteMmr: state.profile.mmr,
+    blackMmr: botMmrForPlayer(state.profile.mmr),
   });
   state.games.push(game);
   saveState(state);

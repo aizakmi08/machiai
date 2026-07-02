@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   STARTING_MMR,
   applyMove,
+  botMmrForPlayer,
   calculateRating,
   createGame,
   resignGame,
@@ -68,4 +69,11 @@ test("aborted games do not change MMR", () => {
   const result = calculateRating({ mmr: 600, ratedGames: 4 }, { mmr: 500, ratedGames: 4 }, "aborted");
   assert.equal(result.white.delta, 0);
   assert.equal(result.black.delta, 0);
+});
+
+test("bot MMR scales with player rating while remaining bounded", () => {
+  assert.equal(botMmrForPlayer(500), 650);
+  assert.equal(botMmrForPlayer(850), 850);
+  assert.equal(botMmrForPlayer(1000), 1100);
+  assert.equal(botMmrForPlayer(1500), 1400);
 });

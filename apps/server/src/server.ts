@@ -7,6 +7,7 @@ import {
   STARTING_MMR,
   abortGame,
   applyMove,
+  botMmrForPlayer,
   calculateRating,
   chooseBotMove,
   createGame,
@@ -297,6 +298,8 @@ export class MachiaiServer {
       blackPlayerId: black.playerId,
       whiteHandle: white.handle,
       blackHandle: black.handle,
+      whiteMmr: white.mmr,
+      blackMmr: black.mmr,
     });
     await this.requiredStore().upsertGame(game);
     this.io.sockets.sockets.get(white.socketId)?.join(`game:${game.gameId}`);
@@ -316,6 +319,8 @@ export class MachiaiServer {
       blackPlayerId: "bot",
       whiteHandle: ticket.handle,
       blackHandle: "Machiai Bot",
+      whiteMmr: ticket.mmr,
+      blackMmr: botMmrForPlayer(ticket.mmr),
     });
     await this.requiredStore().upsertGame(game);
     this.io.sockets.sockets.get(ticket.socketId)?.join(`game:${game.gameId}`);
@@ -348,7 +353,7 @@ export class MachiaiServer {
     const now = new Date();
     let next = tickClock(current, now);
     if (next.status === "active") {
-      next = applyMove(next, next.blackPlayerId, chooseBotMove(next.fen), now).game;
+      next = applyMove(next, next.blackPlayerId, chooseBotMove(next.fen, next.blackMmr), now).game;
     }
     await this.requiredStore().upsertGame(next);
     this.io.to(`game:${next.gameId}`).emit(next.status === "ended" ? "game.ended" : "game.state", next);

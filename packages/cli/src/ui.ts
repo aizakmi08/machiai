@@ -52,7 +52,7 @@ export async function playLocalBotGame(initial: GameState, options: { ascii?: bo
         } else {
           game = applyMove(game, state.profile.playerId, answer).game;
           if (game.status === "active") {
-            game = applyMove(game, game.blackPlayerId, chooseBotMove(game.fen)).game;
+            game = applyMove(game, game.blackPlayerId, chooseBotMove(game.fen, game.blackMmr)).game;
           }
         }
         upsertLocalGame(game);

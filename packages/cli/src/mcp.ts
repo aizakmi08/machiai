@@ -106,7 +106,7 @@ server.registerTool(
     if (!game) throw new Error(`Unknown game: ${gameId}`);
     let next = applyMove(game, state.profile.playerId, move).game;
     if (next.status === "active") {
-      next = applyMove(next, next.blackPlayerId, chooseBotMove(next.fen)).game;
+      next = applyMove(next, next.blackPlayerId, chooseBotMove(next.fen, next.blackMmr)).game;
     }
     upsertLocalGame(next);
     return textResult(JSON.stringify({ game_id: gameId, game: next }, null, 2));

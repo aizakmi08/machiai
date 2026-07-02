@@ -6,7 +6,7 @@ import test from "node:test";
 import { io, type Socket } from "socket.io-client";
 import { MachiaiServer } from "../apps/server/src/server.js";
 import { createStore, JsonFileStore } from "../apps/server/src/store.js";
-import { createDeviceKey, createId, STARTING_MMR, type GameState, type PlayerProfile, type PresenceState } from "../packages/shared/src/index.js";
+import { botMmrForPlayer, createDeviceKey, createId, STARTING_MMR, type GameState, type PlayerProfile, type PresenceState } from "../packages/shared/src/index.js";
 
 test("two clients match, finish a rated game, and receive rating updates", async () => {
   const { server, url } = await startTestServer();
@@ -20,6 +20,8 @@ test("two clients match, finish a rated game, and receive rating updates", async
   await emitAck(a, "queue.join", { sessionId: "wait-a" });
   await emitAck(b, "queue.join", { sessionId: "wait-b" });
   const game = await started;
+  assert.equal(game.whiteMmr, STARTING_MMR);
+  assert.equal(game.blackMmr, STARTING_MMR);
   const whiteSocket = game.whitePlayerId === alice.playerId ? a : b;
   const blackSocket = game.blackPlayerId === alice.playerId ? a : b;
   const rating = onceSocket<{ rating: { delta: number } }>(whiteSocket, "rating.updated");
@@ -66,6 +68,8 @@ test("bot fallback starts an unrated game when lobby is empty", async () => {
   const game = await started;
   assert.equal(game.mode, "bot");
   assert.equal(game.rated, false);
+  assert.equal(game.whiteMmr, STARTING_MMR);
+  assert.equal(game.blackMmr, botMmrForPlayer(STARTING_MMR));
   const botReply = waitForGameState(a, (state) => state.gameId === game.gameId && state.moves.length === 2);
   const response = (await emitAck(a, "game.move", { gameId: game.gameId, move: "e2e4" })) as { game: GameState };
   assert.equal(response.game.moves.length, 1);
