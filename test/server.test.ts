@@ -89,6 +89,34 @@ test("bot fallback starts an unrated game when lobby is empty", async () => {
   await server.stop();
 });
 
+test("server auto-forfeits when the active clock expires", async () => {
+  const { server, url, store } = await startTestServer({ botFallbackMs: 20, botMoveMs: 20 });
+  const alice = signedPlayer("alice");
+  await store.upsertPlayer(alice);
+  const a = await client(url, alice);
+  await emitAck(a, "wait.heartbeat", { sessionId: "wait-a", agent: "codex", active: true });
+  const started = onceSocket<GameState>(a, "game.started");
+  await emitAck(a, "queue.join", { sessionId: "wait-a" });
+  const game = await started;
+  const expiredSoon = {
+    ...game,
+    clocks: {
+      ...game.clocks,
+      whiteMs: 10,
+      lastTickAt: new Date().toISOString(),
+    },
+  };
+  await store.upsertGame(expiredSoon);
+  const ended = onceSocket<GameState>(a, "game.ended");
+  (server as unknown as { scheduleGameTimeout(game: GameState): void }).scheduleGameTimeout(expiredSoon);
+  const timeout = await ended;
+  assert.equal(timeout.status, "ended");
+  assert.equal(timeout.endReason, "timeout");
+  assert.equal(timeout.result, "black_win");
+  a.disconnect();
+  await server.stop();
+});
+
 test("players can send in-game reactions and quick chat", async () => {
   const { server, url, store } = await startTestServer();
   const alice = signedPlayer("alice");

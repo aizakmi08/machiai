@@ -379,6 +379,7 @@ export function App() {
       const response = await emitAck<{ game: GameState }>(socket, "game.move", { gameId: game.gameId, move: moveInput });
       setGame(response.game);
       setSelected(undefined);
+      setMovePending(false);
       setMessage("Move played.");
     } catch (error) {
       setGame(previousGame);
@@ -644,6 +645,8 @@ export function App() {
               : signedIn || signingIn
                 ? detection?.status === "maybe"
                   ? "Agent app detected. Use machiai run --overlay for rated unlock."
+                  : detection?.status === "active" && game?.status !== "ended"
+                    ? detection.reason
                   : message
                 : "Sign in with X to play rated."}
         </span>

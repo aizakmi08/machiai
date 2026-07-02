@@ -83,6 +83,7 @@ export class MachiaiServer {
   private readonly disconnectTimers = new Map<string, NodeJS.Timeout>();
   private readonly botTimers = new Map<string, NodeJS.Timeout>();
   private readonly botMoveTimers = new Map<string, NodeJS.Timeout>();
+  private readonly gameTimeoutTimers = new Map<string, NodeJS.Timeout>();
   private readonly xAuthSessions = new Map<string, XAuthSession>();
   private readonly rateBuckets = new Map<string, RateBucket>();
   private redisClients?: { pub: RedisClientType; sub: RedisClientType };
@@ -114,7 +115,9 @@ export class MachiaiServer {
   async stop(): Promise<void> {
     for (const timer of this.botTimers.values()) clearTimeout(timer);
     for (const timer of this.botMoveTimers.values()) clearTimeout(timer);
+    for (const timer of this.gameTimeoutTimers.values()) clearTimeout(timer);
     for (const timer of this.disconnectTimers.values()) clearTimeout(timer);
+    this.gameTimeoutTimers.clear();
     await new Promise<void>((resolve) => this.io.close(() => resolve()));
     await new Promise<void>((resolve) => this.http.close(() => resolve()));
     await this.redisClients?.pub.quit().catch(() => undefined);
@@ -291,7 +294,8 @@ export class MachiaiServer {
       const game = await this.requireGame(payload.gameId);
       const { game: next } = applyMove(game, player.playerId, payload.move);
       await this.requiredStore().upsertGame(next);
-      this.io.to(`game:${next.gameId}`).emit("game.state", next);
+      this.io.to(`game:${next.gameId}`).emit(next.status === "ended" ? "game.ended" : "game.state", next);
+      this.scheduleGameTimeout(next);
       await this.finalizeGameIfNeeded(next);
       if (next.mode === "bot" && next.status === "active" && next.turn === "black") {
         this.scheduleBotMove(next.gameId);
@@ -409,6 +413,7 @@ export class MachiaiServer {
     this.io.sockets.sockets.get(black.socketId)?.join(`game:${game.gameId}`);
     this.io.to(`game:${game.gameId}`).emit("game.started", game);
     this.io.to(`game:${game.gameId}`).emit("game.state", game);
+    this.scheduleGameTimeout(game);
     return game;
   }
 
@@ -430,6 +435,7 @@ export class MachiaiServer {
     this.io.sockets.sockets.get(ticket.socketId)?.join(`game:${game.gameId}`);
     this.io.to(`game:${game.gameId}`).emit("game.started", game);
     this.io.to(`game:${game.gameId}`).emit("game.state", game);
+    this.scheduleGameTimeout(game);
     return game;
   }
 
@@ -461,12 +467,43 @@ export class MachiaiServer {
     }
     await this.requiredStore().upsertGame(next);
     this.io.to(`game:${next.gameId}`).emit(next.status === "ended" ? "game.ended" : "game.state", next);
+    this.scheduleGameTimeout(next);
+    await this.finalizeGameIfNeeded(next);
+  }
+
+  private scheduleGameTimeout(game: GameState): void {
+    this.clearGameTimeout(game.gameId);
+    if (game.status !== "active") return;
+    const remainingMs = game.turn === "white" ? game.clocks.whiteMs : game.clocks.blackMs;
+    const timer = setTimeout(() => void this.expireGameOnTimeout(game.gameId), Math.max(0, remainingMs) + 25);
+    timer.unref?.();
+    this.gameTimeoutTimers.set(game.gameId, timer);
+  }
+
+  private clearGameTimeout(gameId: string): void {
+    const timer = this.gameTimeoutTimers.get(gameId);
+    if (timer) clearTimeout(timer);
+    this.gameTimeoutTimers.delete(gameId);
+  }
+
+  private async expireGameOnTimeout(gameId: string): Promise<void> {
+    this.gameTimeoutTimers.delete(gameId);
+    const current = await this.requiredStore().getGame(gameId);
+    if (!current || current.status !== "active") return;
+    const next = tickClock(current, new Date());
+    if (next.status !== "ended") {
+      this.scheduleGameTimeout(next);
+      return;
+    }
+    await this.requiredStore().upsertGame(next);
+    this.io.to(`game:${next.gameId}`).emit("game.ended", next);
     await this.finalizeGameIfNeeded(next);
   }
 
   private async finalizeGameIfNeeded(game: GameState): Promise<void> {
     if (game.status !== "ended") return;
     this.clearBotMove(game.gameId);
+    this.clearGameTimeout(game.gameId);
     const eventName = game.endReason === "resignation" || game.endReason === "timeout" || game.endReason === "disconnect" ? "game.ended" : "game.state";
     this.io.to(`game:${game.gameId}`).emit(eventName, game);
     if (!game.rated || !game.bothPlayersMoved || !game.result || game.result === "aborted" || this.finalizedRatings.has(game.gameId)) {
