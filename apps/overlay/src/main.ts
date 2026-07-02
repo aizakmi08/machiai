@@ -200,7 +200,7 @@ function saveOverlayBounds(bounds: Rectangle): void {
 }
 
 async function overlayServerUrl(): Promise<string> {
-  if (process.env.MACHIAI_SERVER_URL) return serverUrl();
+  if (process.env.MACHIAI_LOCAL_SERVER !== "1") return serverUrl();
   if (localOverlayServerUrl) return localOverlayServerUrl;
   const storePath = join(machiaiHome(), "overlay-server.sqlite");
   localOverlayServer = new MachiaiServer({ storePath });

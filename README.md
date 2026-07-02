@@ -52,6 +52,7 @@ Rules that keep it healthy:
 
 ```bash
 machiai app [--dev-server <url>]  # open the floating desktop chess overlay
+machiai app --local               # open overlay with a private local server
 machiai run -- <command...>       # run an agent and unlock chess
 machiai run --overlay -- <cmd...> # run an agent and open the overlay
 machiai play                      # play only if a local wait session is active
@@ -78,9 +79,15 @@ machiai app
 machiai run --overlay -- codex exec "build the feature"
 ```
 
-The overlay is an always-on-top macOS window with drag/drop and click-to-move chess. It detects active Machiai wait sessions, MCP wait sessions, and supported terminal agent processes. Open GUI apps are shown as "maybe" unless Machiai can prove an agent is running.
+The overlay is an always-on-top macOS window with drag/drop and click-to-move chess. By default it connects to the public Machiai matchmaking server. It detects active Machiai wait sessions, MCP wait sessions, and supported terminal agent processes. Open GUI apps are shown as "maybe" unless Machiai can prove an agent is running.
 
-For local server testing:
+For private local testing:
+
+```bash
+machiai app --local
+```
+
+For a custom development server:
 
 ```bash
 machiai app --dev-server http://127.0.0.1:4137

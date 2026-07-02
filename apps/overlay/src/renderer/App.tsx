@@ -356,9 +356,12 @@ export function App() {
                 onChange={(event) => setDraftName(event.currentTarget.value)}
                 aria-label="Username"
               />
-              <button type="submit">Save</button>
+              <button type="submit" data-short="OK">
+                Save
+              </button>
               <button
                 type="button"
+                data-short="X"
                 onClick={() => {
                   setDraftName(profile ? displayNameForProfile(profile) : "");
                   setEditingName(false);
@@ -468,7 +471,7 @@ function agentLabel(detection: AgentDetection | undefined): string {
 }
 
 function connectionLabel(connection: ConnectionState, host: string): string {
-  if (connection === "online") return host.startsWith("127.0.0.1") ? "local server" : "online";
+  if (connection === "online") return host.startsWith("127.0.0.1") || host.startsWith("localhost") ? "local" : "online";
   if (connection === "connecting") return "connecting";
   return "offline";
 }

@@ -14,6 +14,7 @@ export interface OverlayLaunchOptions {
 export async function startOverlayApp(args: string[], options: OverlayLaunchOptions = {}): Promise<void> {
   const waitForExit = options.waitForExit ?? true;
   const server = readOption(args, "--dev-server") ?? readOption(args, "--server-url");
+  const localServer = hasFlag(args, "--local");
   const smoke = hasFlag(args, "--smoke");
   const cliDir = dirname(fileURLToPath(import.meta.url));
   const mainPath = resolve(cliDir, "../../../apps/overlay/src/main.js");
@@ -39,6 +40,7 @@ export async function startOverlayApp(args: string[], options: OverlayLaunchOpti
     env: {
       ...process.env,
       ...(server ? { MACHIAI_SERVER_URL: server } : {}),
+      ...(localServer ? { MACHIAI_LOCAL_SERVER: "1" } : {}),
     },
   });
 

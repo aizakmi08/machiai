@@ -145,6 +145,7 @@ function help(): void {
 
 Commands:
   machiai app [--dev-server <url>]  Open the floating desktop chess overlay
+  machiai app --local               Open overlay with a private local server
   machiai run -- <command...>       Run an agent and unlock chess
   machiai run --overlay -- <cmd...> Run an agent and open the overlay
   machiai play                      Play only if a local wait session is active

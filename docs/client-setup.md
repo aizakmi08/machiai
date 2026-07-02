@@ -44,6 +44,7 @@ pnpm server --port 4137
 MACHIAI_SERVER_URL=http://127.0.0.1:4137 pnpm dev -- run -- node fake-agent.js
 pnpm build
 node dist/packages/cli/src/cli.js app --dev-server http://127.0.0.1:4137
+node dist/packages/cli/src/cli.js app --local
 MACHIAI_SERVER_URL=http://127.0.0.1:4137 node dist/packages/cli/src/cli.js run --overlay -- node examples/fake-agent.js
 ```
 
