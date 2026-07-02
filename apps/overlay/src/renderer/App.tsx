@@ -234,7 +234,7 @@ export function App() {
   const serverHost = bootstrap ? new URL(bootstrap.serverUrl).host : "server";
   const startLabel = connection !== "online" ? "Connecting" : detection?.status === "active" ? "Start" : "No agent";
   const resultTone = game?.status === "ended" ? resultForPlayerColor(game, playerColor) : "none";
-  const lastMoveLabel = lastMove ? `${lastMove.color === playerColor ? "You" : "Last"}: ${lastMove.san}` : "No moves yet";
+  const lastMoveLabel = lastMove ? `${lastMove.color === playerColor ? "You" : "Last"}: ${lastMove.san}` : "";
 
   async function joinQueue() {
     if (!canQueue || !detection || !profile) return;
@@ -468,6 +468,26 @@ export function App() {
               )}
               <strong>{formatClock(liveClock(game, playerColor, bottomClock))}</strong>
             </section>
+
+            <section className="actions">
+              {game?.status === "active" ? (
+                <button className="secondary" onClick={() => void resign()}>
+                  Resign
+                </button>
+              ) : queue === "searching" ? (
+                <button className="secondary" onClick={() => void leaveQueue()}>
+                  Leave Queue
+                </button>
+              ) : (
+                <button className="primary" disabled={!canQueue} onClick={() => void joinQueue()}>
+                  {startLabel}
+                </button>
+              )}
+              <div className="rating">
+                <span>{profile?.mmr ?? 500} MMR</span>
+                {ratingDelta !== undefined ? <em>{ratingDelta > 0 ? `+${ratingDelta}` : ratingDelta}</em> : null}
+              </div>
+            </section>
           </div>
 
           <aside className="sideRail" aria-label="Game actions">
@@ -504,26 +524,6 @@ export function App() {
               </form>
             </div>
           </aside>
-        </div>
-      </section>
-
-      <section className="actions">
-        {game?.status === "active" ? (
-          <button className="secondary" onClick={() => void resign()}>
-            Resign
-          </button>
-        ) : queue === "searching" ? (
-          <button className="secondary" onClick={() => void leaveQueue()}>
-            Leave Queue
-          </button>
-        ) : (
-          <button className="primary" disabled={!canQueue} onClick={() => void joinQueue()}>
-            {startLabel}
-          </button>
-        )}
-        <div className="rating">
-          <span>{profile?.mmr ?? 500} MMR</span>
-          {ratingDelta !== undefined ? <em>{ratingDelta > 0 ? `+${ratingDelta}` : ratingDelta}</em> : null}
         </div>
       </section>
 

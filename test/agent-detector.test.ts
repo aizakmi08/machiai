@@ -36,6 +36,26 @@ test("terminal codex and claude processes are only maybe without a Machiai wait 
   assert.equal(claude.agent, "claude");
 });
 
+test("overlay app mode can unlock visible agent processes", async () => {
+  const codex = await detectAgentActivity({
+    now,
+    processNames: ["launchd", "codex"],
+    state: stateWithSession(false),
+    trustVisibleAgentApps: true,
+  });
+  assert.equal(codex.status, "active");
+  assert.equal(codex.source, "process");
+
+  const app = await detectAgentActivity({
+    now,
+    processNames: ["Codex Helper (Renderer)"],
+    state: stateWithSession(false),
+    trustVisibleAgentApps: true,
+  });
+  assert.equal(app.status, "active");
+  assert.equal(app.source, "app");
+});
+
 test("open GUI apps are maybe, not active", async () => {
   const detection = await detectAgentActivity({
     now,

@@ -7,12 +7,13 @@ import { loadState, type LocalState } from "./local.js";
 const execFileAsync = promisify(execFile);
 
 const ACTIVE_CLI_PROCESS_NAMES = new Set(["codex", "claude", "cursor-agent"]);
-const GUI_APP_PROCESS_NAMES = [/^Codex$/, /^Claude$/, /^Cursor(?: Helper.*)?$/];
+const GUI_APP_PROCESS_NAMES = [/^Codex(?: Helper.*)?$/, /^Claude(?: Helper.*)?$/, /^Cursor(?: Helper.*)?$/];
 
 export interface AgentDetectionOptions {
   now?: Date;
   state?: LocalState;
   processNames?: string[];
+  trustVisibleAgentApps?: boolean;
 }
 
 export async function detectAgentActivity(options: AgentDetectionOptions = {}): Promise<AgentDetection> {
@@ -35,6 +36,15 @@ export async function detectAgentActivity(options: AgentDetectionOptions = {}): 
   const processNames = options.processNames ?? (await readProcessNames());
   const activeCli = processNames.find((name) => ACTIVE_CLI_PROCESS_NAMES.has(name));
   if (activeCli) {
+    if (options.trustVisibleAgentApps) {
+      return {
+        status: "active",
+        source: "process",
+        agent: activeCli,
+        reason: `${activeCli} is running as a local agent process.`,
+        detectedAt: now.toISOString(),
+      };
+    }
     return {
       status: "maybe",
       source: "process",
@@ -46,6 +56,15 @@ export async function detectAgentActivity(options: AgentDetectionOptions = {}): 
 
   const guiApp = processNames.find((name) => GUI_APP_PROCESS_NAMES.some((pattern) => pattern.test(name)));
   if (guiApp) {
+    if (options.trustVisibleAgentApps) {
+      return {
+        status: "active",
+        source: "app",
+        agent: guiApp,
+        reason: `${guiApp} is open. Overlay app-detection mode is unlocked.`,
+        detectedAt: now.toISOString(),
+      };
+    }
     return {
       status: "maybe",
       source: "app",

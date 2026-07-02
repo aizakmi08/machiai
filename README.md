@@ -45,7 +45,7 @@ Rules that keep it healthy:
 - 3+0 chess only: max 6 minutes of clock time.
 - No rated queue without an active agent wait session.
 - No infinite rematch button.
-- No chat, streaks, loot, or feed mechanics in V1.
+- Quick chat and reactions are in-game only. No streaks, loot, or feed mechanics.
 - Bot practice is unrated and only fills an empty lobby.
 
 ## Commands
@@ -79,7 +79,7 @@ machiai app
 machiai run --overlay -- codex exec "build the feature"
 ```
 
-The overlay is an always-on-top macOS window with drag/drop and click-to-move chess. By default it connects to the public Machiai matchmaking server. It detects active Machiai wait sessions, MCP wait sessions, and supported terminal agent processes. Open GUI apps are shown as "maybe" unless Machiai can prove an agent is running.
+The overlay is an always-on-top macOS window with drag/drop and click-to-move chess. By default it connects to the public Machiai matchmaking server. It detects active Machiai wait sessions, MCP wait sessions, supported terminal agent processes, and visible Codex/Claude/Cursor app processes. Wrapping with `machiai run --overlay -- ...` is still the strictest unlock path.
 
 For private local testing:
 
