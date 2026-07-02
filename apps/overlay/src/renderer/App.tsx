@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Chess, type Square } from "chess.js";
 import { io, type Socket } from "socket.io-client";
+import { normalizeTwitterHandle, twitterUrl } from "../../../../packages/shared/src/profile.js";
 import type {
   AgentDetection,
   Color,
@@ -45,6 +46,7 @@ export function App() {
   const [profile, setProfile] = useState<PlayerProfile | undefined>();
   const [editingName, setEditingName] = useState(false);
   const [draftName, setDraftName] = useState("");
+  const [draftTwitter, setDraftTwitter] = useState("");
   const [detection, setDetection] = useState<AgentDetection | undefined>();
   const [connection, setConnection] = useState<ConnectionState>("connecting");
   const [queue, setQueue] = useState<QueueState>("idle");
@@ -68,7 +70,10 @@ export function App() {
 
   useEffect(() => {
     profileRef.current = profile;
-    if (profile && !editingName) setDraftName(displayNameForProfile(profile));
+    if (profile && !editingName) {
+      setDraftName(displayNameForProfile(profile));
+      setDraftTwitter(profile.twitterHandle ? `@${profile.twitterHandle}` : "");
+    }
   }, [profile, editingName]);
 
   useEffect(() => {
@@ -220,6 +225,8 @@ export function App() {
   const bottomPlayerId = game ? (playerColor === "white" ? game.whitePlayerId : game.blackPlayerId) : profile?.playerId;
   const topPlayer = labelForPlayer(topPlayerId, playerColor === "white" ? game?.blackHandle : game?.whiteHandle, profile, "Opponent");
   const bottomPlayer = labelForPlayer(bottomPlayerId, playerColor === "white" ? game?.whiteHandle : game?.blackHandle, profile, "You");
+  const topTwitter = game ? (playerColor === "white" ? game.blackTwitterHandle : game.whiteTwitterHandle) : undefined;
+  const bottomTwitter = game ? (playerColor === "white" ? game.whiteTwitterHandle : game.blackTwitterHandle) : profile?.twitterHandle;
   const topMmr = game ? (playerColor === "white" ? game.blackMmr : game.whiteMmr) : undefined;
   const bottomMmr = game ? (playerColor === "white" ? game.whiteMmr : game.blackMmr) : profile?.mmr;
   const topClock = game ? (playerColor === "white" ? game.clocks.blackMs : game.clocks.whiteMs) : 3 * 60 * 1000;
@@ -267,14 +274,15 @@ export function App() {
       return;
     }
     try {
-      const nextProfile = await window.machiaiOverlay.updateProfile(nextName);
+      const nextTwitter = normalizeTwitterHandle(draftTwitter);
+      const nextProfile = await window.machiaiOverlay.updateProfile(nextName, draftTwitter);
       profileRef.current = nextProfile;
       setProfile(nextProfile);
       setEditingName(false);
-      setMessage(`Username set to ${nextName}.`);
+      setMessage(nextTwitter ? `Profile set: ${nextName} @${nextTwitter}.` : `Username set to ${nextName}.`);
       const socket = socketRef.current;
       if (socket?.connected) {
-        await emitAck(socket, "profile.update", { displayName: nextName });
+        await emitAck(socket, "profile.update", { displayName: nextName, twitterHandle: draftTwitter });
       }
     } catch (error) {
       setMessage(errorMessage(error));
@@ -322,6 +330,12 @@ export function App() {
     }
   }
 
+  async function openTwitter(handle: string | undefined) {
+    const normalized = normalizeTwitterHandle(handle);
+    if (!normalized) return;
+    await window.machiaiOverlay.openExternal(twitterUrl(normalized));
+  }
+
   function onSquareClick(square: string) {
     if (!canMoveNow) return;
     const piece = board.get(square);
@@ -363,6 +377,11 @@ export function App() {
               <span className="playerIdentity">
                 <span>{topPlayer}</span>
                 {topMmr ? <em>{topMmr} MMR</em> : null}
+                {topTwitter ? (
+                  <button className="twitterLink" type="button" onClick={() => void openTwitter(topTwitter)}>
+                    @{topTwitter}
+                  </button>
+                ) : null}
               </span>
               <strong>{formatClock(liveClock(game, playerColor === "white" ? "black" : "white", topClock))}</strong>
             </section>
@@ -415,6 +434,13 @@ export function App() {
                     onChange={(event) => setDraftName(event.currentTarget.value)}
                     aria-label="Username"
                   />
+                  <input
+                    value={draftTwitter}
+                    maxLength={16}
+                    placeholder="@twitter"
+                    onChange={(event) => setDraftTwitter(event.currentTarget.value)}
+                    aria-label="Twitter handle"
+                  />
                   <button type="submit" data-short="OK">
                     Save
                   </button>
@@ -423,6 +449,7 @@ export function App() {
                     data-short="X"
                     onClick={() => {
                       setDraftName(profile ? displayNameForProfile(profile) : "");
+                      setDraftTwitter(profile?.twitterHandle ? `@${profile.twitterHandle}` : "");
                       setEditingName(false);
                     }}
                   >
@@ -433,6 +460,7 @@ export function App() {
                 <span className="nameWithEdit">
                   <span>{bottomPlayer}</span>
                   {bottomMmr ? <em>{bottomMmr} MMR</em> : null}
+                  {bottomTwitter ? <em>@{bottomTwitter}</em> : null}
                   <button type="button" onClick={() => setEditingName(true)}>
                     Edit
                   </button>

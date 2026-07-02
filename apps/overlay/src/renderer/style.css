@@ -178,7 +178,8 @@ footer {
 }
 
 .nameWithEdit button,
-.nameEditor button {
+.nameEditor button,
+.twitterLink {
   -webkit-app-region: no-drag;
   height: 22px;
   border: 1px solid #3a3a3a;
@@ -188,6 +189,15 @@ footer {
   font-size: 10px;
   font-weight: 700;
   cursor: pointer;
+}
+
+.twitterLink {
+  flex: 0 1 auto;
+  max-width: 88px;
+  padding: 0 7px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .nameWithEdit button {
@@ -201,7 +211,7 @@ footer {
   max-width: 100%;
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) minmax(72px, 0.75fr) auto auto;
   align-items: center;
   gap: 6px;
   overflow: hidden;
@@ -636,7 +646,7 @@ footer span {
   }
 
   .nameEditor {
-    grid-template-columns: minmax(0, 1fr) 28px 28px;
+    grid-template-columns: minmax(0, 1fr) minmax(54px, 0.75fr) 28px 28px;
     gap: 4px;
   }
 

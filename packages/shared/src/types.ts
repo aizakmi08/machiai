@@ -20,6 +20,7 @@ export interface PlayerProfile {
   deviceKey: string;
   handle: string;
   displayName?: string;
+  twitterHandle?: string;
   mmr: number;
   ratedGames: number;
   createdAt: string;
@@ -65,6 +66,8 @@ export interface GameState {
   blackPlayerId: string;
   whiteHandle: string;
   blackHandle: string;
+  whiteTwitterHandle?: string;
+  blackTwitterHandle?: string;
   whiteMmr?: number;
   blackMmr?: number;
   fen: string;
@@ -98,6 +101,7 @@ export interface RatingResult {
 export interface QueueTicket {
   playerId: string;
   handle: string;
+  twitterHandle?: string;
   mmr: number;
   sessionId: string;
   joinedAt: string;
@@ -108,6 +112,7 @@ export interface LeaderboardEntry {
   playerId: string;
   handle: string;
   displayName?: string;
+  twitterHandle?: string;
   mmr: number;
   ratedGames: number;
 }

@@ -56,7 +56,7 @@ machiai app --local               # open overlay with a private local server
 machiai run -- <command...>       # run an agent and unlock chess
 machiai run --overlay -- <cmd...> # run an agent and open the overlay
 machiai play                      # play only if a local wait session is active
-machiai profile [--name <name>]   # show/update anonymous profile
+machiai profile [--name <name>] [--twitter <handle>] # show/update anonymous profile
 machiai leaderboard               # show hosted leaderboard
 machiai demo                      # run a local two-client demo
 machiai server [--port 4137]      # start local matchmaking server

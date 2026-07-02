@@ -94,9 +94,11 @@ async function playCommand(args: string[]): Promise<void> {
 
 function profileCommand(args: string[]): void {
   const name = readOption(args, "--name");
-  const profile = updateProfile(name);
+  const twitter = readOption(args, "--twitter") ?? readOption(args, "--x");
+  const profile = updateProfile(name, twitter);
   console.log(`${profile.displayName || profile.handle}`);
   console.log(`Handle: ${profile.handle}`);
+  console.log(`Twitter: ${profile.twitterHandle ? `@${profile.twitterHandle}` : "not set"}`);
   console.log(`MMR: ${profile.mmr}`);
   console.log(`Rated games: ${profile.ratedGames}`);
   console.log(`State: ${statePath()}`);
@@ -149,7 +151,7 @@ Commands:
   machiai run -- <command...>       Run an agent and unlock chess
   machiai run --overlay -- <cmd...> Run an agent and open the overlay
   machiai play                      Play only if a local wait session is active
-  machiai profile [--name <name>]   Show or update anonymous profile
+  machiai profile [--name <name>] [--twitter <handle>]  Show or update anonymous profile
   machiai leaderboard               Show hosted leaderboard
   machiai demo                      Run a local two-client demo
   machiai server [--port 4137]      Start local matchmaking server

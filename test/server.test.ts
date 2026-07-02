@@ -11,7 +11,7 @@ import { botMmrForPlayer, createDeviceKey, createId, STARTING_MMR, type GameStat
 test("two clients match, finish a rated game, and receive rating updates", async () => {
   const { server, url } = await startTestServer();
   const alice = player("alice");
-  const bob = player("bob");
+  const bob = { ...player("bob"), twitterHandle: "bob_codes" };
   const a = await client(url, alice);
   const b = await client(url, bob);
   await emitAck(a, "wait.heartbeat", { sessionId: "wait-a", agent: "codex", active: true });
@@ -22,6 +22,8 @@ test("two clients match, finish a rated game, and receive rating updates", async
   const game = await started;
   assert.equal(game.whiteMmr, STARTING_MMR);
   assert.equal(game.blackMmr, STARTING_MMR);
+  const bobTwitter = game.whitePlayerId === bob.playerId ? game.whiteTwitterHandle : game.blackTwitterHandle;
+  assert.equal(bobTwitter, "bob_codes");
   const whiteSocket = game.whitePlayerId === alice.playerId ? a : b;
   const blackSocket = game.blackPlayerId === alice.playerId ? a : b;
   const rating = onceSocket<{ rating: { delta: number } }>(whiteSocket, "rating.updated");
@@ -162,6 +164,16 @@ test("auth preserves existing server rating when client profile is stale", async
   assert.equal(response.player.ratedGames, 9);
   assert.equal(response.player.displayName, "alice-new");
   socket.disconnect();
+  await server.stop();
+});
+
+test("profile update sanitizes and stores twitter handle", async () => {
+  const { server, url } = await startTestServer();
+  const alice = player("alice");
+  const a = await client(url, alice);
+  const response = (await emitAck(a, "profile.update", { twitterHandle: "https://twitter.com/alice_dev/status/1" })) as { player: PlayerProfile };
+  assert.equal(response.player.twitterHandle, "alice_dev");
+  a.disconnect();
   await server.stop();
 });
 

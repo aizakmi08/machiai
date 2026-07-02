@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
-import { app, BrowserWindow, ipcMain, screen, type Rectangle } from "electron";
+import { app, BrowserWindow, ipcMain, screen, shell, type Rectangle } from "electron";
 import { MachiaiServer } from "../../server/src/server.js";
 import { detectAgentActivity } from "../../../packages/cli/src/agent-detector.js";
 import { activeLocalWaitSession, loadState, machiaiHome, saveProfile, updateProfile } from "../../../packages/cli/src/local.js";
@@ -102,8 +102,11 @@ function registerIpc(): void {
   });
 
   ipcMain.handle("machiai:detect-agent", async () => detectAgentActivity());
-  ipcMain.handle("machiai:update-profile", (_event, displayName: string) => updateProfile(displayName.trim()));
+  ipcMain.handle("machiai:update-profile", (_event, displayName: string, twitterHandle?: string) => updateProfile(displayName.trim(), twitterHandle));
   ipcMain.handle("machiai:save-profile", (_event, profile: PlayerProfile) => saveProfile(profile));
+  ipcMain.handle("machiai:open-external", async (_event, url: string): Promise<void> => {
+    await shell.openExternal(url);
+  });
   ipcMain.handle("machiai:snap", async (): Promise<SnapResult> => snapWindow());
 }
 

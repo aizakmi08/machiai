@@ -13,6 +13,7 @@ import {
   createGame,
   createHandle,
   createId,
+  normalizeTwitterHandle,
   resignGame,
   tickClock,
   type GameState,
@@ -98,6 +99,7 @@ export class MachiaiServer {
       deviceKey: payload.deviceKey ?? existing?.deviceKey ?? createId("device"),
       handle: payload.handle ?? existing?.handle ?? createHandle(),
       displayName: payload.displayName ?? existing?.displayName,
+      twitterHandle: normalizeTwitterHandle(payload.twitterHandle ?? existing?.twitterHandle),
       mmr: existing?.mmr ?? payload.mmr ?? STARTING_MMR,
       ratedGames: existing?.ratedGames ?? payload.ratedGames ?? 0,
       createdAt: existing?.createdAt ?? payload.createdAt ?? now,
@@ -118,12 +120,13 @@ export class MachiaiServer {
     ack?.({ ok: true, player, presence });
   }
 
-  private async onProfileUpdate(socket: Socket, payload: { displayName?: string; handle?: string }, ack?: (value: unknown) => void) {
+  private async onProfileUpdate(socket: Socket, payload: { displayName?: string; handle?: string; twitterHandle?: string }, ack?: (value: unknown) => void) {
     const player = await this.requireSocketPlayer(socket);
     const updated = {
       ...player,
       displayName: payload.displayName ?? player.displayName,
       handle: payload.handle ?? player.handle,
+      twitterHandle: payload.twitterHandle !== undefined ? normalizeTwitterHandle(payload.twitterHandle) : player.twitterHandle,
       updatedAt: new Date().toISOString(),
     };
     await this.requiredStore().upsertPlayer(updated);
@@ -167,6 +170,7 @@ export class MachiaiServer {
       this.queue.push({
         playerId: player.playerId,
         handle: player.displayName || player.handle,
+        twitterHandle: player.twitterHandle,
         mmr: player.mmr,
         sessionId: session.sessionId,
         joinedAt: new Date().toISOString(),
@@ -298,6 +302,8 @@ export class MachiaiServer {
       blackPlayerId: black.playerId,
       whiteHandle: white.handle,
       blackHandle: black.handle,
+      whiteTwitterHandle: white.twitterHandle,
+      blackTwitterHandle: black.twitterHandle,
       whiteMmr: white.mmr,
       blackMmr: black.mmr,
     });
@@ -319,6 +325,7 @@ export class MachiaiServer {
       blackPlayerId: "bot",
       whiteHandle: ticket.handle,
       blackHandle: "Machiai Bot",
+      whiteTwitterHandle: ticket.twitterHandle,
       whiteMmr: ticket.mmr,
       blackMmr: botMmrForPlayer(ticket.mmr),
     });

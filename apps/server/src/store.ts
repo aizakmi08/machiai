@@ -74,7 +74,14 @@ export class JsonFileStore implements MachiaiStore {
     return [...this.players.values()]
       .sort((a, b) => b.mmr - a.mmr || b.ratedGames - a.ratedGames || a.handle.localeCompare(b.handle))
       .slice(0, limit)
-      .map(({ playerId, handle, displayName, mmr, ratedGames }) => ({ playerId, handle, displayName, mmr, ratedGames }));
+      .map(({ playerId, handle, displayName, twitterHandle, mmr, ratedGames }) => ({
+        playerId,
+        handle,
+        displayName,
+        twitterHandle,
+        mmr,
+        ratedGames,
+      }));
   }
 
   async updatePlayerRating(playerId: string, change: RatingChange): Promise<PlayerProfile> {
@@ -170,6 +177,7 @@ export class SqliteStore implements MachiaiStore {
         device_key TEXT NOT NULL,
         handle TEXT NOT NULL,
         display_name TEXT,
+        twitter_handle TEXT,
         mmr INTEGER NOT NULL,
         rated_games INTEGER NOT NULL,
         created_at TEXT NOT NULL,
@@ -218,22 +226,34 @@ export class SqliteStore implements MachiaiStore {
         created_at TEXT NOT NULL
       );
     `);
+    this.tryAddColumn("players", "twitter_handle", "TEXT");
   }
 
   async upsertPlayer(player: PlayerProfile): Promise<PlayerProfile> {
     this.requiredDb()
       .prepare(
-        `INSERT INTO players (player_id, device_key, handle, display_name, mmr, rated_games, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO players (player_id, device_key, handle, display_name, twitter_handle, mmr, rated_games, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(player_id) DO UPDATE SET
           device_key=excluded.device_key,
           handle=excluded.handle,
           display_name=excluded.display_name,
+          twitter_handle=excluded.twitter_handle,
           mmr=excluded.mmr,
           rated_games=excluded.rated_games,
           updated_at=excluded.updated_at`,
       )
-      .run(player.playerId, player.deviceKey, player.handle, player.displayName ?? null, player.mmr, player.ratedGames, player.createdAt, player.updatedAt);
+      .run(
+        player.playerId,
+        player.deviceKey,
+        player.handle,
+        player.displayName ?? null,
+        player.twitterHandle ?? null,
+        player.mmr,
+        player.ratedGames,
+        player.createdAt,
+        player.updatedAt,
+      );
     return player;
   }
 
@@ -247,7 +267,7 @@ export class SqliteStore implements MachiaiStore {
       .prepare("SELECT * FROM players ORDER BY mmr DESC, rated_games DESC, handle ASC LIMIT ?")
       .all(limit)
       .map(rowToPlayer)
-      .map(({ playerId, handle, displayName, mmr, ratedGames }) => ({ playerId, handle, displayName, mmr, ratedGames }));
+      .map(({ playerId, handle, displayName, twitterHandle, mmr, ratedGames }) => ({ playerId, handle, displayName, twitterHandle, mmr, ratedGames }));
   }
 
   async updatePlayerRating(playerId: string, change: RatingChange): Promise<PlayerProfile> {
@@ -368,6 +388,14 @@ export class SqliteStore implements MachiaiStore {
     if (!this.db) throw new Error("SQLite store is not initialized.");
     return this.db;
   }
+
+  private tryAddColumn(table: string, column: string, type: string): void {
+    try {
+      this.requiredDb().exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+    } catch {
+      // Column already exists on upgraded stores.
+    }
+  }
 }
 
 export async function createStore(path?: string): Promise<MachiaiStore> {
@@ -392,6 +420,7 @@ function rowToPlayer(row: Record<string, unknown>): PlayerProfile {
     deviceKey: String(row.device_key),
     handle: String(row.handle),
     displayName: row.display_name ? String(row.display_name) : undefined,
+    twitterHandle: row.twitter_handle ? String(row.twitter_handle) : undefined,
     mmr: Number(row.mmr),
     ratedGames: Number(row.rated_games),
     createdAt: String(row.created_at),

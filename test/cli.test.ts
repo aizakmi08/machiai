@@ -63,6 +63,32 @@ test("saved rating survives local profile reload", () => {
   }
 });
 
+test("profile command saves twitter handle", () => {
+  const home = mkdtempSync(join(tmpdir(), "machiai-profile-twitter-"));
+  const output = execFileSync(process.execPath, [cli, "profile", "--twitter", "https://x.com/coder_dev"], {
+    encoding: "utf8",
+    env: { ...process.env, MACHIAI_HOME: home },
+  });
+  const saved = JSON.parse(readFileSync(join(home, "state.json"), "utf8")) as { profile: { twitterHandle?: string } };
+  assert.match(output, /Twitter: @coder_dev/);
+  assert.equal(saved.profile.twitterHandle, "coder_dev");
+});
+
+test("profile save can clear twitter handle", () => {
+  const previousHome = process.env.MACHIAI_HOME;
+  const home = mkdtempSync(join(tmpdir(), "machiai-profile-clear-twitter-"));
+  process.env.MACHIAI_HOME = home;
+  try {
+    const initial = loadState().profile;
+    saveProfile({ ...initial, twitterHandle: "coder_dev", updatedAt: new Date().toISOString() });
+    saveProfile({ ...initial, twitterHandle: undefined, updatedAt: new Date().toISOString() });
+    assert.equal(loadState().profile.twitterHandle, undefined);
+  } finally {
+    if (previousHome === undefined) delete process.env.MACHIAI_HOME;
+    else process.env.MACHIAI_HOME = previousHome;
+  }
+});
+
 test("mcp-config prints npx config", () => {
   const output = execFileSync(process.execPath, [cli, "mcp-config"], { encoding: "utf8" });
   const parsed = JSON.parse(output) as { mcpServers: { machiai: { command: string; args: string[] } } };

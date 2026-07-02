@@ -8,6 +8,7 @@ import {
   createGame,
   createHandle,
   createId,
+  normalizeTwitterHandle,
   type GameState,
   type PlayerProfile,
   type WaitSession,
@@ -71,10 +72,15 @@ export function saveState(state: LocalState): void {
   writeFileSync(path, JSON.stringify(state, null, 2));
 }
 
-export function updateProfile(displayName?: string): PlayerProfile {
+export function updateProfile(displayName?: string, twitterHandle?: string): PlayerProfile {
   const state = loadState();
-  if (displayName !== undefined) {
-    state.profile = { ...state.profile, displayName, updatedAt: new Date().toISOString() };
+  if (displayName !== undefined || twitterHandle !== undefined) {
+    state.profile = {
+      ...state.profile,
+      ...(displayName !== undefined ? { displayName } : {}),
+      ...(twitterHandle !== undefined ? { twitterHandle: normalizeTwitterHandle(twitterHandle) } : {}),
+      updatedAt: new Date().toISOString(),
+    };
     saveState(state);
   }
   return state.profile;
@@ -82,7 +88,7 @@ export function updateProfile(displayName?: string): PlayerProfile {
 
 export function saveProfile(profile: PlayerProfile): PlayerProfile {
   const state = loadState();
-  state.profile = { ...state.profile, ...profile, updatedAt: profile.updatedAt ?? new Date().toISOString() };
+  state.profile = { ...state.profile, ...profile, twitterHandle: profile.twitterHandle, updatedAt: profile.updatedAt ?? new Date().toISOString() };
   saveState(state);
   return state.profile;
 }
@@ -144,6 +150,7 @@ export function createLocalBotGame(sessionId: string): GameState {
     blackPlayerId: "bot",
     whiteHandle: state.profile.displayName || state.profile.handle,
     blackHandle: "Machiai Bot",
+    whiteTwitterHandle: state.profile.twitterHandle,
     whiteMmr: state.profile.mmr,
     blackMmr: botMmrForPlayer(state.profile.mmr),
   });

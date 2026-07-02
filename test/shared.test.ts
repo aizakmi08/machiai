@@ -6,6 +6,7 @@ import {
   botMmrForPlayer,
   calculateRating,
   createGame,
+  normalizeTwitterHandle,
   resignGame,
 } from "../packages/shared/src/index.js";
 
@@ -76,4 +77,10 @@ test("bot MMR scales with player rating while remaining bounded", () => {
   assert.equal(botMmrForPlayer(850), 850);
   assert.equal(botMmrForPlayer(1000), 1100);
   assert.equal(botMmrForPlayer(1500), 1400);
+});
+
+test("twitter handles normalize from handles and URLs", () => {
+  assert.equal(normalizeTwitterHandle("@aizakmi08"), "aizakmi08");
+  assert.equal(normalizeTwitterHandle("https://x.com/coder_dev?s=20"), "coder_dev");
+  assert.equal(normalizeTwitterHandle("https://twitter.com/long_handle_name_here"), "long_handle_nam");
 });
