@@ -329,10 +329,14 @@ footer {
 }
 
 .square.lastMove {
-  box-shadow: inset 0 0 0 2px #fff;
+  box-shadow: inset 0 0 0 2px #9a9a9a;
 }
 
 .square.selected.lastMove {
+  box-shadow: inset 0 0 0 3px #fff;
+}
+
+.square.premove {
   box-shadow: inset 0 0 0 3px #fff;
 }
 
@@ -359,25 +363,23 @@ footer {
   font-size: clamp(18px, 72cqw, 42px);
   user-select: none;
   text-shadow: none;
+  transform: translateY(-1px);
 }
 
 .piece.white {
   color: #fff;
+  -webkit-text-stroke: 0.7px #050505;
   text-shadow:
-    0 1px 0 #000,
-    1px 0 0 #000,
-    -1px 0 0 #000,
-    0 -1px 0 #000;
+    0 1px 1px rgba(0, 0, 0, 0.9),
+    0 0 2px rgba(255, 255, 255, 0.72);
 }
 
 .piece.black {
-  color: #050505;
+  color: #000;
+  -webkit-text-stroke: 0.65px #f6f6f6;
   text-shadow:
-    0 1px 0 #fff,
-    1px 0 0 #fff,
-    -1px 0 0 #fff,
-    0 -1px 0 #fff,
-    0 2px 4px rgba(255, 255, 255, 0.35);
+    0 1px 1px rgba(255, 255, 255, 0.88),
+    0 0 2px rgba(255, 255, 255, 0.58);
 }
 
 .resultBurst,

@@ -88,7 +88,15 @@ export function updateProfile(displayName?: string, twitterHandle?: string): Pla
 
 export function saveProfile(profile: PlayerProfile): PlayerProfile {
   const state = loadState();
-  state.profile = { ...state.profile, ...profile, twitterHandle: profile.twitterHandle, updatedAt: profile.updatedAt ?? new Date().toISOString() };
+  state.profile = {
+    ...state.profile,
+    ...profile,
+    twitterHandle: "twitterHandle" in profile ? profile.twitterHandle : state.profile.twitterHandle,
+    xUserId: profile.xUserId ?? state.profile.xUserId,
+    authToken: profile.authToken ?? state.profile.authToken,
+    profileImageUrl: profile.profileImageUrl ?? state.profile.profileImageUrl,
+    updatedAt: profile.updatedAt ?? new Date().toISOString(),
+  };
   saveState(state);
   return state.profile;
 }

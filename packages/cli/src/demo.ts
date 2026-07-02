@@ -4,12 +4,15 @@ import { createDeviceKey, createHandle, createId, STARTING_MMR, type GameState, 
 import { JsonFileStore } from "../../../apps/server/src/store.js";
 
 export async function runDemo(): Promise<void> {
-  const server = new MachiaiServer({ store: new JsonFileStore(), botFallbackMs: 250 });
+  const store = new JsonFileStore();
+  const server = new MachiaiServer({ store, botFallbackMs: 250 });
   const url = await server.start(0);
   console.log(`Machiai demo server: ${url}`);
 
   const alice = createDemoPlayer("alice");
   const bob = createDemoPlayer("bob");
+  await store.upsertPlayer(alice);
+  await store.upsertPlayer(bob);
   const a = io(url, { transports: ["websocket", "polling"] });
   const b = io(url, { transports: ["websocket", "polling"] });
   await Promise.all([onceSocket(a, "connect"), onceSocket(b, "connect")]);
@@ -46,7 +49,10 @@ function createDemoPlayer(name: string): PlayerProfile {
     playerId: createId(name),
     deviceKey: createDeviceKey(),
     handle: createHandle(),
-    displayName: name,
+    displayName: `@${name}`,
+    twitterHandle: name,
+    xUserId: `x_demo_${name}`,
+    authToken: `demo_auth_${name}`,
     mmr: STARTING_MMR,
     ratedGames: 0,
     createdAt: now,

@@ -22,6 +22,12 @@ const PIECES: Record<string, string> = {
   B: "♗",
   N: "♘",
   P: "♙",
+  W_K: "♚",
+  W_Q: "♛",
+  W_R: "♜",
+  W_B: "♝",
+  W_N: "♞",
+  W_P: "♟",
   k: "♚",
   q: "♛",
   r: "♜",
@@ -36,6 +42,7 @@ type ChatMessage = { gameId: string; playerId: string; handle: string; message: 
 type ReactionMessage = { gameId: string; playerId: string; handle: string; reaction: string; createdAt: string };
 type XAuthStart = { ok: boolean; sessionId?: string; authUrl?: string; message?: string; error?: string };
 type XAuthPoll = { ok: boolean; status: "pending" | "complete" | "error" | "missing"; player?: PlayerProfile; error?: string };
+type Premove = { from: string; to: string; promotion: string };
 
 const REACTIONS = ["💀", "👀", "😂", "🤝"];
 
@@ -54,6 +61,7 @@ export function App() {
   const [queue, setQueue] = useState<QueueState>("idle");
   const [game, setGame] = useState<GameState | undefined>();
   const [selected, setSelected] = useState<string | undefined>();
+  const [premove, setPremove] = useState<Premove | undefined>();
   const [movePending, setMovePending] = useState(false);
   const [message, setMessage] = useState("Opening Machiai.");
   const [agentFinished, setAgentFinished] = useState(false);
@@ -167,6 +175,7 @@ export function App() {
         setGame(nextGame);
         setQueue("in_game");
         setSelected(undefined);
+        setPremove(undefined);
         setMovePending(false);
         setChatMessages([]);
         setReaction(undefined);
@@ -184,6 +193,7 @@ export function App() {
         setGame(nextGame);
         setQueue("idle");
         setSelected(undefined);
+        setPremove(undefined);
         setMovePending(false);
         setMessage(resultMessage(nextGame, profileRef.current?.playerId ?? nextBootstrap.profile.playerId));
       });
@@ -224,8 +234,12 @@ export function App() {
   const board = useMemo(() => parseFen(game?.fen ?? START_FEN), [game?.fen]);
   const squares = useMemo(() => orientedSquares(playerColor), [playerColor]);
   const lastMove = game?.moves.at(-1);
-  const legalTargets = useMemo(() => legalMovesFor(game?.fen, selected, game?.turn === playerColor && !movePending), [game?.fen, game?.turn, movePending, playerColor, selected]);
+  const legalTargets = useMemo(
+    () => legalMovesFor(game?.fen, selected, game?.status === "active" && !movePending, game?.turn === playerColor ? undefined : playerColor),
+    [game?.fen, game?.status, game?.turn, movePending, playerColor, selected],
+  );
   const canMoveNow = Boolean(game && game.status === "active" && game.turn === playerColor && !movePending);
+  const canPlanPremove = Boolean(game && game.status === "active" && game.turn !== playerColor && !movePending);
   const topPlayerId = game ? (playerColor === "white" ? game.blackPlayerId : game.whitePlayerId) : undefined;
   const bottomPlayerId = game ? (playerColor === "white" ? game.whitePlayerId : game.blackPlayerId) : profile?.playerId;
   const topPlayer = labelForPlayer(topPlayerId, playerColor === "white" ? game?.blackHandle : game?.whiteHandle, profile, "Opponent");
@@ -241,6 +255,19 @@ export function App() {
   const startLabel = connection !== "online" ? "Connecting" : !signedIn ? (signingIn ? "Signing in" : "Sign in with X") : detection?.status === "active" ? "Start" : "No agent";
   const resultTone = game?.status === "ended" ? resultForPlayerColor(game, playerColor) : "none";
   const lastMoveLabel = lastMove ? `${lastMove.color === playerColor ? "You" : "Last"}: ${lastMove.san}` : "";
+  const pendingPremoveLabel = premove ? `Premove: ${premove.from}-${premove.to}` : "";
+
+  useEffect(() => {
+    if (!premove || !game || game.status !== "active" || game.turn !== playerColor || movePending) return;
+    const next = premove;
+    setPremove(undefined);
+    setSelected(undefined);
+    if (!legalMovesFor(game.fen, next.from, true).has(next.to)) {
+      setMessage("Premove cancelled.");
+      return;
+    }
+    void makeMove(next.from, next.to);
+  }, [game?.fen, game?.status, game?.turn, movePending, playerColor, premove]);
 
   async function joinQueue() {
     if (!canQueue || !detection || !profile) return;
@@ -335,16 +362,26 @@ export function App() {
 
   async function makeMove(from: string, to: string) {
     const socket = socketRef.current;
-    if (!socket || !game || game.status !== "active" || game.turn !== playerColor || movePending) return;
+    if (!socket || !game || !profile || game.status !== "active" || game.turn !== playerColor || movePending) return;
     const piece = board.get(from);
     const promotion = piece?.toLowerCase() === "p" && (to.endsWith("8") || to.endsWith("1")) ? "q" : "";
+    const moveInput = `${from}${to}${promotion}`;
+    const previousGame = game;
+    const optimistic = previewMove(game, profile.playerId, moveInput);
+    if (!optimistic) {
+      setMessage("Illegal move.");
+      return;
+    }
     try {
       setMovePending(true);
-      const response = await emitAck<{ game: GameState }>(socket, "game.move", { gameId: game.gameId, move: `${from}${to}${promotion}` });
+      setGame(optimistic);
+      setSelected(undefined);
+      const response = await emitAck<{ game: GameState }>(socket, "game.move", { gameId: game.gameId, move: moveInput });
       setGame(response.game);
       setSelected(undefined);
-      setMessage("Move sent.");
+      setMessage("Move played.");
     } catch (error) {
+      setGame(previousGame);
       setMovePending(false);
       setMessage(errorMessage(error));
     }
@@ -381,7 +418,7 @@ export function App() {
   }
 
   function onSquareClick(square: string) {
-    if (!canMoveNow) return;
+    if (!game || game.status !== "active" || movePending) return;
     const piece = board.get(square);
     if (!selected) {
       if (isOwnPiece(piece, playerColor)) setSelected(square);
@@ -395,7 +432,31 @@ export function App() {
       setSelected(square);
       return;
     }
-    void makeMove(selected, square);
+    if (canMoveNow) {
+      void makeMove(selected, square);
+      return;
+    }
+    if (canPlanPremove && legalTargets.has(square)) {
+      const selectedPiece = board.get(selected);
+      const promotion = selectedPiece?.toLowerCase() === "p" && (square.endsWith("8") || square.endsWith("1")) ? "q" : "";
+      setPremove({ from: selected, to: square, promotion });
+      setSelected(undefined);
+      setMessage(`Premove set: ${selected}-${square}.`);
+    }
+  }
+
+  function onSquareDrop(from: string, to: string) {
+    if (!from || !game || game.status !== "active" || movePending) return;
+    if (canMoveNow) {
+      void makeMove(from, to);
+      return;
+    }
+    if (!canPlanPremove || !isOwnPiece(board.get(from), playerColor) || !legalMovesFor(game.fen, from, true, playerColor).has(to)) return;
+    const piece = board.get(from);
+    const promotion = piece?.toLowerCase() === "p" && (to.endsWith("8") || to.endsWith("1")) ? "q" : "";
+    setPremove({ from, to, promotion });
+    setSelected(undefined);
+    setMessage(`Premove set: ${from}-${to}.`);
   }
 
   return (
@@ -436,24 +497,25 @@ export function App() {
                 const isSelected = selected === square;
                 const isLegal = legalTargets.has(square);
                 const isLastMove = square === lastMove?.from || square === lastMove?.to;
+                const isPremove = square === premove?.from || square === premove?.to;
                 return (
                   <button
                     key={square}
-                    className={`square ${squareShade(square)} ${isSelected ? "selected" : ""} ${isLegal ? "legalMove" : ""} ${isLastMove ? "lastMove" : ""}`}
+                    className={`square ${squareShade(square)} ${isSelected ? "selected" : ""} ${isLegal ? "legalMove" : ""} ${isLastMove ? "lastMove" : ""} ${isPremove ? "premove" : ""}`}
                     onClick={() => onSquareClick(square)}
                     onDragOver={(event) => event.preventDefault()}
                     onDrop={(event) => {
                       event.preventDefault();
                       const from = event.dataTransfer.getData("text/plain");
-                      if (from) void makeMove(from, square);
+                      onSquareDrop(from, square);
                     }}
                   >
                     <span
                       className={`piece ${pieceColor(piece) ?? ""}`}
-                      draggable={canMoveNow && isOwnPiece(piece, playerColor)}
+                      draggable={(canMoveNow || canPlanPremove) && isOwnPiece(piece, playerColor)}
                       onDragStart={(event) => event.dataTransfer.setData("text/plain", square)}
                     >
-                      {piece ? PIECES[piece] : ""}
+                      {piece ? pieceGlyph(piece) : ""}
                     </span>
                   </button>
                 );
@@ -537,7 +599,7 @@ export function App() {
           </div>
 
           <aside className="sideRail" aria-label="Game actions">
-            <div className="moveHint">{lastMoveLabel}</div>
+            <div className="moveHint">{pendingPremoveLabel || lastMoveLabel}</div>
             <div className="reactionStack">
               {REACTIONS.map((item) => (
                 <button key={item} type="button" disabled={!game} onClick={() => void sendReaction(item)}>
@@ -615,15 +677,81 @@ function parseFen(fen: string): Map<string, string> {
   return map;
 }
 
-function legalMovesFor(fen: string | undefined, selected: string | undefined, enabled: boolean): Set<string> {
+function legalMovesFor(fen: string | undefined, selected: string | undefined, enabled: boolean, turnOverride?: Color): Set<string> {
   if (!fen || !selected || !enabled) return new Set();
   try {
-    const chess = new Chess(fen);
+    const chess = new Chess(turnOverride ? fenWithTurn(fen, turnOverride) : fen);
     const moves = chess.moves({ square: selected as Square, verbose: true }) as Array<{ to: string }>;
     return new Set(moves.map((move) => move.to));
   } catch {
     return new Set();
   }
+}
+
+function previewMove(game: GameState, playerId: string, moveInput: string): GameState | undefined {
+  try {
+    const color = game.whitePlayerId === playerId ? "white" : game.blackPlayerId === playerId ? "black" : undefined;
+    if (!color || color !== game.turn) return undefined;
+    const chess = new Chess(game.fen);
+    const move = parseMoveInput(chess, moveInput);
+    const now = new Date();
+    const elapsed = Math.max(0, now.getTime() - Date.parse(game.clocks.lastTickAt));
+    const createdAt = now.toISOString();
+    return {
+      ...game,
+      fen: chess.fen(),
+      pgn: chess.pgn(),
+      turn: chess.turn() === "w" ? "white" : "black",
+      clocks: {
+        whiteMs: color === "white" ? Math.max(0, game.clocks.whiteMs - elapsed) : game.clocks.whiteMs,
+        blackMs: color === "black" ? Math.max(0, game.clocks.blackMs - elapsed) : game.clocks.blackMs,
+        lastTickAt: createdAt,
+      },
+      moves: [
+        ...game.moves,
+        {
+          ply: game.moves.length + 1,
+          playerId,
+          color,
+          san: move.san,
+          from: move.from,
+          to: move.to,
+          promotion: move.promotion,
+          fenAfter: chess.fen(),
+          createdAt,
+        },
+      ],
+      bothPlayersMoved:
+        game.bothPlayersMoved ||
+        (color === "white" && game.moves.some((item) => item.color === "black")) ||
+        (color === "black" && game.moves.some((item) => item.color === "white")),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function parseMoveInput(chess: Chess, input: string) {
+  const uci = /^([a-h][1-8])([a-h][1-8])([qrbn])?$/i.exec(input.trim());
+  const move = uci
+    ? chess.move({ from: uci[1].toLowerCase(), to: uci[2].toLowerCase(), promotion: uci[3]?.toLowerCase() })
+    : chess.move(input);
+  if (!move) throw new Error(`Illegal move: ${input}`);
+  return move;
+}
+
+function fenWithTurn(fen: string, color: Color): string {
+  const parts = fen.split(" ");
+  if (parts.length < 2) return fen;
+  parts[1] = color === "white" ? "w" : "b";
+  return parts.join(" ");
+}
+
+function pieceGlyph(piece: string): string {
+  if (piece === piece.toUpperCase()) {
+    return PIECES[`W_${piece}`] ?? PIECES[piece] ?? "";
+  }
+  return PIECES[piece] ?? "";
 }
 
 function pieceColor(piece?: string): Color | undefined {

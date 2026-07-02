@@ -63,6 +63,41 @@ test("saved rating survives local profile reload", () => {
   }
 });
 
+test("public server profile does not erase saved X auth", () => {
+  const previousHome = process.env.MACHIAI_HOME;
+  const home = mkdtempSync(join(tmpdir(), "machiai-profile-auth-preserve-"));
+  process.env.MACHIAI_HOME = home;
+  try {
+    const initial = loadState().profile;
+    saveProfile({
+      ...initial,
+      displayName: "@coder_dev",
+      twitterHandle: "coder_dev",
+      xUserId: "x_coder_dev",
+      authToken: "local_auth_token",
+      profileImageUrl: "https://example.com/avatar.jpg",
+      updatedAt: new Date().toISOString(),
+    });
+    saveProfile({
+      ...initial,
+      displayName: "@coder_dev",
+      twitterHandle: "coder_dev",
+      mmr: 540,
+      ratedGames: 2,
+      updatedAt: new Date().toISOString(),
+    });
+    const reloaded = loadState().profile;
+    assert.equal(reloaded.authToken, "local_auth_token");
+    assert.equal(reloaded.xUserId, "x_coder_dev");
+    assert.equal(reloaded.profileImageUrl, "https://example.com/avatar.jpg");
+    assert.equal(reloaded.mmr, 540);
+    assert.equal(reloaded.ratedGames, 2);
+  } finally {
+    if (previousHome === undefined) delete process.env.MACHIAI_HOME;
+    else process.env.MACHIAI_HOME = previousHome;
+  }
+});
+
 test("profile command saves twitter handle", () => {
   const home = mkdtempSync(join(tmpdir(), "machiai-profile-twitter-"));
   const output = execFileSync(process.execPath, [cli, "profile", "--twitter", "https://x.com/coder_dev"], {
