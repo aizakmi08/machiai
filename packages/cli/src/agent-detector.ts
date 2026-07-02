@@ -11,6 +11,9 @@ const SELF_PROCESS_RE = /(?:^|\s)(?:machiai|@aizakmi08\/machiai)(?:\s|$)/i;
 const ACTIVE_APP_TOTAL_CPU_THRESHOLD = 8;
 const ACTIVE_APP_SINGLE_PROCESS_CPU_THRESHOLD = 5;
 const ACTIVE_APP_SERVER_CPU_THRESHOLD = 0.75;
+const APP_ACTIVITY_HOLD_MS = 45_000;
+
+const recentAppActivity = new Map<string, number>();
 
 export interface AgentDetectionOptions {
   now?: Date;
@@ -57,6 +60,7 @@ export async function detectAgentActivity(options: AgentDetectionOptions = {}): 
 
   const activeApp = classifyActiveAppActivity(processes);
   if (activeApp) {
+    rememberAppActivity(activeApp.agent, now);
     return {
       status: "active",
       source: "app-activity",
@@ -65,6 +69,9 @@ export async function detectAgentActivity(options: AgentDetectionOptions = {}): 
       detectedAt: now.toISOString(),
     };
   }
+
+  const recentApp = recentAppActivityDetection(processes, now);
+  if (recentApp) return recentApp;
 
   const maybeCli = processes.map(classifyCliProcess).find((item): item is CliProcessMatch => Boolean(item));
   if (maybeCli) {
@@ -100,6 +107,10 @@ export async function detectAgentActivity(options: AgentDetectionOptions = {}): 
     reason: "No active Machiai wait session or supported agent process was detected.",
     detectedAt: now.toISOString(),
   };
+}
+
+export function resetAgentDetectionMemoryForTests(): void {
+  recentAppActivity.clear();
 }
 
 interface CliProcessMatch {
@@ -160,6 +171,51 @@ function classifyActiveAppActivity(processes: ProcessSnapshot[]): AppActivityMat
       return { agent, totalCpu: stats.totalCpu, maxCpu: stats.maxCpu };
     }
   }
+  return undefined;
+}
+
+function rememberAppActivity(agent: string, now: Date): void {
+  recentAppActivity.set(agent, now.getTime());
+}
+
+function recentAppActivityDetection(processes: ProcessSnapshot[], now: Date): AgentDetection | undefined {
+  const nowMs = now.getTime();
+  let mostRecent: { agent: string; lastActiveAt: number } | undefined;
+
+  for (const [agent, lastActiveAt] of recentAppActivity) {
+    const ageMs = Math.max(0, nowMs - lastActiveAt);
+    if (ageMs > APP_ACTIVITY_HOLD_MS || !isAgentAppPresent(processes, agent)) {
+      recentAppActivity.delete(agent);
+      continue;
+    }
+    if (!mostRecent || lastActiveAt > mostRecent.lastActiveAt) {
+      mostRecent = { agent, lastActiveAt };
+    }
+  }
+
+  if (!mostRecent) return undefined;
+  return {
+    status: "active",
+    source: "app-activity",
+    agent: mostRecent.agent,
+    reason: `${mostRecent.agent} was active moments ago; keeping the wait unlocked between work bursts.`,
+    detectedAt: now.toISOString(),
+  };
+}
+
+function isAgentAppPresent(processes: ProcessSnapshot[], agent: string): boolean {
+  return processes.some((process) => {
+    if (isBackgroundOnlyAgentAppProcess(process.commandLine)) return false;
+    return agentNameForProcess(process) === agent;
+  });
+}
+
+function agentNameForProcess(process: ProcessSnapshot): string | undefined {
+  const fromCommand = agentAppName(process.commandLine);
+  if (fromCommand) return fromCommand;
+  if (/^Codex(?: Helper.*)?$/.test(process.name)) return "Codex";
+  if (/^Claude(?: Helper.*)?$/.test(process.name)) return "Claude";
+  if (/^Cursor(?: Helper.*)?$/.test(process.name)) return "Cursor";
   return undefined;
 }
 

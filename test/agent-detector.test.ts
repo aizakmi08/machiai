@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
-import test from "node:test";
-import { detectAgentActivity } from "../packages/cli/src/agent-detector.js";
+import test, { beforeEach } from "node:test";
+import { detectAgentActivity, resetAgentDetectionMemoryForTests } from "../packages/cli/src/agent-detector.js";
 import type { LocalState } from "../packages/cli/src/local.js";
 
 const now = new Date("2026-07-01T12:00:00.000Z");
+
+beforeEach(() => {
+  resetAgentDetectionMemoryForTests();
+});
 
 test("active local wait sessions unlock the overlay", async () => {
   const detection = await detectAgentActivity({
@@ -129,6 +133,75 @@ test("background-only Codex helper activity does not unlock the overlay", async 
   });
   assert.equal(detection.status, "maybe");
   assert.equal(detection.source, "app");
+});
+
+test("recent Codex app activity stays active between CPU bursts", async () => {
+  const active = await detectAgentActivity({
+    now,
+    processes: [
+      {
+        name: "Codex",
+        commandLine: "/Applications/Codex.app/Contents/Frameworks/Codex Framework.framework/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+        cpuPercent: 18,
+      },
+      {
+        name: "codex",
+        commandLine: "/Applications/Codex.app/Contents/Resources/codex app-server --analytics-default-enabled",
+        cpuPercent: 0.2,
+      },
+    ],
+    state: stateWithSession(false),
+  });
+  assert.equal(active.status, "active");
+  assert.equal(active.source, "app-activity");
+
+  const quiet = await detectAgentActivity({
+    now: new Date(now.getTime() + 2000),
+    processes: [
+      {
+        name: "Codex",
+        commandLine: "/Applications/Codex.app/Contents/MacOS/Codex",
+        cpuPercent: 0,
+      },
+      {
+        name: "codex",
+        commandLine: "/Applications/Codex.app/Contents/Resources/codex app-server --analytics-default-enabled",
+        cpuPercent: 0,
+      },
+    ],
+    state: stateWithSession(false),
+  });
+  assert.equal(quiet.status, "active");
+  assert.equal(quiet.source, "app-activity");
+  assert.match(quiet.reason, /between work bursts/);
+});
+
+test("recent app activity expires instead of unlocking forever", async () => {
+  await detectAgentActivity({
+    now,
+    processes: [
+      {
+        name: "Codex",
+        commandLine: "/Applications/Codex.app/Contents/Frameworks/Codex Framework.framework/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+        cpuPercent: 18,
+      },
+    ],
+    state: stateWithSession(false),
+  });
+
+  const expired = await detectAgentActivity({
+    now: new Date(now.getTime() + 46_000),
+    processes: [
+      {
+        name: "Codex",
+        commandLine: "/Applications/Codex.app/Contents/MacOS/Codex",
+        cpuPercent: 0,
+      },
+    ],
+    state: stateWithSession(false),
+  });
+  assert.equal(expired.status, "maybe");
+  assert.equal(expired.source, "app");
 });
 
 test("overlay app mode can unlock visible agent processes", async () => {
