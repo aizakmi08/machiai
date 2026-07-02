@@ -481,9 +481,15 @@ export function App() {
           <div className="boardFrame">
             <section className="playerRow top">
               <span className="playerIdentity">
-                <span>{topPlayer}</span>
-                {topMmr ? <em>{topMmr} MMR</em> : null}
                 {topTwitter ? (
+                  <button className="playerNameLink" type="button" title={`Open @${topTwitter} on X`} onClick={() => void openTwitter(topTwitter)}>
+                    {topPlayer}
+                  </button>
+                ) : (
+                  <span>{topPlayer}</span>
+                )}
+                {topMmr ? <em>{topMmr} MMR</em> : null}
+                {topTwitter && topPlayer !== `@${topTwitter}` ? (
                   <button className="twitterLink" type="button" onClick={() => void openTwitter(topTwitter)}>
                     @{topTwitter}
                   </button>

@@ -2,7 +2,7 @@ import type { PlayerProfile, WaitSession } from "./types.js";
 
 export type AgentDetectionStatus = "active" | "maybe" | "inactive";
 
-export type AgentDetectionSource = "local-session" | "process" | "app" | "none";
+export type AgentDetectionSource = "local-session" | "process" | "app-activity" | "app" | "none";
 
 export interface AgentDetection {
   status: AgentDetectionStatus;

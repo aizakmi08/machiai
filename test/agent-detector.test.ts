@@ -73,10 +73,12 @@ test("codex app-server and visible app processes stay maybe instead of active", 
       {
         name: "codex",
         commandLine: "/Applications/Codex.app/Contents/Resources/codex app-server --analytics-default-enabled",
+        cpuPercent: 0,
       },
       {
         name: "Codex",
         commandLine: "/Applications/Codex.app/Contents/MacOS/Codex",
+        cpuPercent: 0,
       },
     ],
     state: stateWithSession(false),
@@ -84,6 +86,49 @@ test("codex app-server and visible app processes stay maybe instead of active", 
   assert.equal(detection.status, "maybe");
   assert.equal(detection.source, "app");
   assert.equal(detection.agent, "Codex");
+});
+
+test("active Codex app CPU activity unlocks the overlay without reading app contents", async () => {
+  const detection = await detectAgentActivity({
+    now,
+    processes: [
+      {
+        name: "Codex",
+        commandLine: "/Applications/Codex.app/Contents/Frameworks/Codex Framework.framework/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+        cpuPercent: 12.5,
+      },
+      {
+        name: "codex",
+        commandLine: "/Applications/Codex.app/Contents/Resources/codex app-server --analytics-default-enabled",
+        cpuPercent: 1.1,
+      },
+    ],
+    state: stateWithSession(false),
+  });
+  assert.equal(detection.status, "active");
+  assert.equal(detection.source, "app-activity");
+  assert.equal(detection.agent, "Codex");
+});
+
+test("background-only Codex helper activity does not unlock the overlay", async () => {
+  const detection = await detectAgentActivity({
+    now,
+    processes: [
+      {
+        name: "Codex",
+        commandLine: "/Applications/Codex.app/Contents/Frameworks/Codex Framework.framework/Helpers/browser_crashpad_handler",
+        cpuPercent: 99,
+      },
+      {
+        name: "Codex",
+        commandLine: "/Applications/Codex.app/Contents/MacOS/Codex",
+        cpuPercent: 0,
+      },
+    ],
+    state: stateWithSession(false),
+  });
+  assert.equal(detection.status, "maybe");
+  assert.equal(detection.source, "app");
 });
 
 test("overlay app mode can unlock visible agent processes", async () => {

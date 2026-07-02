@@ -39,7 +39,7 @@ npx -y @aizakmi08/machiai run -- codex exec "build the feature"
 
 ## Agent Gating
 
-Rated Start unlocks from a fresh Machiai wait session, created by `machiai run --overlay -- ...`, `machiai run -- ...`, MCP wait-session tools, or a detected one-shot terminal agent process such as `codex exec ...` or `claude -p ...`. Open Codex, Claude, or Cursor app windows are best-effort context only unless a reliable running command is visible.
+Rated Start unlocks from a fresh Machiai wait session, created by `machiai run --overlay -- ...`, `machiai run -- ...`, MCP wait-session tools, a detected one-shot terminal agent process such as `codex exec ...` or `claude -p ...`, or active Codex/Claude/Cursor app activity on macOS. App activity detection only reads process metadata like command name and CPU usage; it does not read prompts, transcripts, source code, or app databases.
 
 On macOS, `machiai run --overlay -- codex ...` automatically uses `/Applications/Codex.app/Contents/Resources/codex` if plain `codex` is not in your shell `PATH`.
 

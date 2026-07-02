@@ -179,6 +179,27 @@ footer {
   white-space: nowrap;
 }
 
+.playerNameLink {
+  -webkit-app-region: no-drag;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  border: 0;
+  padding: 0;
+  color: #fff;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.playerNameLink:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 .nameWithEdit button,
 .nameEditor button,
 .twitterLink {

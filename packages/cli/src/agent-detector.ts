@@ -8,6 +8,9 @@ const execFileAsync = promisify(execFile);
 
 const GUI_APP_PROCESS_NAMES = [/^Codex(?: Helper.*)?$/, /^Claude(?: Helper.*)?$/, /^Cursor(?: Helper.*)?$/];
 const SELF_PROCESS_RE = /(?:^|\s)(?:machiai|@aizakmi08\/machiai)(?:\s|$)/i;
+const ACTIVE_APP_TOTAL_CPU_THRESHOLD = 8;
+const ACTIVE_APP_SINGLE_PROCESS_CPU_THRESHOLD = 5;
+const ACTIVE_APP_SERVER_CPU_THRESHOLD = 0.75;
 
 export interface AgentDetectionOptions {
   now?: Date;
@@ -20,6 +23,7 @@ export interface AgentDetectionOptions {
 export interface ProcessSnapshot {
   name: string;
   commandLine: string;
+  cpuPercent?: number;
 }
 
 export async function detectAgentActivity(options: AgentDetectionOptions = {}): Promise<AgentDetection> {
@@ -47,6 +51,17 @@ export async function detectAgentActivity(options: AgentDetectionOptions = {}): 
       source: "process",
       agent: activeCli.agent,
       reason: `${activeCli.agent} is running an agent command.`,
+      detectedAt: now.toISOString(),
+    };
+  }
+
+  const activeApp = classifyActiveAppActivity(processes);
+  if (activeApp) {
+    return {
+      status: "active",
+      source: "app-activity",
+      agent: activeApp.agent,
+      reason: `${activeApp.agent} is actively working on this Mac.`,
       detectedAt: now.toISOString(),
     };
   }
@@ -92,6 +107,12 @@ interface CliProcessMatch {
   active: boolean;
 }
 
+interface AppActivityMatch {
+  agent: string;
+  totalCpu: number;
+  maxCpu: number;
+}
+
 function classifyCliProcess(process: ProcessSnapshot): CliProcessMatch | undefined {
   if (SELF_PROCESS_RE.test(process.commandLine)) return undefined;
   const tokens = process.commandLine.split(/\s+/).filter(Boolean);
@@ -114,6 +135,44 @@ function classifyCliProcess(process: ProcessSnapshot): CliProcessMatch | undefin
   }
 
   return undefined;
+}
+
+function classifyActiveAppActivity(processes: ProcessSnapshot[]): AppActivityMatch | undefined {
+  const totals = new Map<string, { totalCpu: number; maxCpu: number; appServerCpu: number }>();
+  for (const process of processes) {
+    const agent = agentAppName(process.commandLine);
+    if (!agent || isBackgroundOnlyAgentAppProcess(process.commandLine)) continue;
+    const cpu = process.cpuPercent ?? 0;
+    if (cpu <= 0) continue;
+    const current = totals.get(agent) ?? { totalCpu: 0, maxCpu: 0, appServerCpu: 0 };
+    current.totalCpu += cpu;
+    current.maxCpu = Math.max(current.maxCpu, cpu);
+    if (/\bcodex\s+app-server\b/i.test(process.commandLine)) current.appServerCpu = Math.max(current.appServerCpu, cpu);
+    totals.set(agent, current);
+  }
+
+  for (const [agent, stats] of totals) {
+    if (
+      stats.totalCpu >= ACTIVE_APP_TOTAL_CPU_THRESHOLD ||
+      stats.maxCpu >= ACTIVE_APP_SINGLE_PROCESS_CPU_THRESHOLD ||
+      stats.appServerCpu >= ACTIVE_APP_SERVER_CPU_THRESHOLD
+    ) {
+      return { agent, totalCpu: stats.totalCpu, maxCpu: stats.maxCpu };
+    }
+  }
+  return undefined;
+}
+
+function agentAppName(commandLine: string): string | undefined {
+  const lowerCommand = commandLine.toLowerCase();
+  if (lowerCommand.includes("/codex.app/")) return "Codex";
+  if (lowerCommand.includes("/claude.app/")) return "Claude";
+  if (lowerCommand.includes("/cursor.app/")) return "Cursor";
+  return undefined;
+}
+
+function isBackgroundOnlyAgentAppProcess(commandLine: string): boolean {
+  return /crashpad|squirrel|shipit|sparkle|updater|bare-modifier-monitor|launch-services-helper/i.test(commandLine);
 }
 
 function hasExecutableToken(tokens: string[], executable: string): boolean {
@@ -162,12 +221,21 @@ function snapshotsFromProcessNames(processNames: string[] | undefined): ProcessS
 async function readProcessSnapshots(): Promise<ProcessSnapshot[]> {
   if (process.platform !== "darwin") return [];
   try {
-    const { stdout } = await execFileAsync("ps", ["-axo", "command="], { maxBuffer: 1024 * 1024 });
+    const { stdout } = await execFileAsync("ps", ["-axo", "pcpu=,command="], { maxBuffer: 1024 * 1024 });
     return stdout
       .split(/\r?\n/)
       .map((line) => line.trim())
       .filter(Boolean)
-      .map((commandLine) => ({ name: inferProcessName(commandLine), commandLine }));
+      .map((line) => {
+        const match = line.match(/^([0-9.]+)\s+(.+)$/);
+        const cpuPercent = match ? Number(match[1]) : undefined;
+        const commandLine = match ? match[2] : line;
+        return {
+          name: inferProcessName(commandLine),
+          commandLine,
+          ...(Number.isFinite(cpuPercent) ? { cpuPercent } : {}),
+        };
+      });
   } catch {
     return [];
   }
