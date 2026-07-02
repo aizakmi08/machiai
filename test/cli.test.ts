@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -139,6 +139,19 @@ test("local wait sessions expire unless heartbeated", () => {
     if (previousHome === undefined) delete process.env.MACHIAI_HOME;
     else process.env.MACHIAI_HOME = previousHome;
   }
+});
+
+test("failed agent startup does not create an active wait session", () => {
+  const home = mkdtempSync(join(tmpdir(), "machiai-failed-agent-"));
+  const result = spawnSync(process.execPath, [cli, "run", "--", "/definitely/missing-machiai-agent"], {
+    encoding: "utf8",
+    env: { ...process.env, MACHIAI_HOME: home, MACHIAI_DISABLE_PTY: "1" },
+  });
+  assert.equal(result.status, 127);
+  assert.match(result.stdout, /Agent failed to start:/);
+  assert.doesNotMatch(result.stdout, /Rated chess is unlocked/);
+  const saved = JSON.parse(readFileSync(join(home, "state.json"), "utf8")) as { waitSessions: unknown[] };
+  assert.equal(saved.waitSessions.length, 0);
 });
 
 test("mcp-config prints npx config", () => {

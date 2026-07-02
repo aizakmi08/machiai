@@ -36,6 +36,56 @@ test("terminal codex and claude processes are only maybe without a Machiai wait 
   assert.equal(claude.agent, "claude");
 });
 
+test("one-shot codex and claude CLI agent commands unlock the overlay", async () => {
+  const codex = await detectAgentActivity({
+    now,
+    processes: [
+      {
+        name: "codex",
+        commandLine: '/Applications/Codex.app/Contents/Resources/codex exec "build the feature"',
+      },
+    ],
+    state: stateWithSession(false),
+  });
+  assert.equal(codex.status, "active");
+  assert.equal(codex.source, "process");
+  assert.equal(codex.agent, "codex");
+
+  const claude = await detectAgentActivity({
+    now,
+    processes: [
+      {
+        name: "claude",
+        commandLine: 'claude -p "fix the bug"',
+      },
+    ],
+    state: stateWithSession(false),
+  });
+  assert.equal(claude.status, "active");
+  assert.equal(claude.source, "process");
+  assert.equal(claude.agent, "claude");
+});
+
+test("codex app-server and visible app processes stay maybe instead of active", async () => {
+  const detection = await detectAgentActivity({
+    now,
+    processes: [
+      {
+        name: "codex",
+        commandLine: "/Applications/Codex.app/Contents/Resources/codex app-server --analytics-default-enabled",
+      },
+      {
+        name: "Codex",
+        commandLine: "/Applications/Codex.app/Contents/MacOS/Codex",
+      },
+    ],
+    state: stateWithSession(false),
+  });
+  assert.equal(detection.status, "maybe");
+  assert.equal(detection.source, "app");
+  assert.equal(detection.agent, "Codex");
+});
+
 test("overlay app mode can unlock visible agent processes", async () => {
   const codex = await detectAgentActivity({
     now,

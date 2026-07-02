@@ -47,7 +47,6 @@ async function runCommand(args: string[]): Promise<void> {
   }
   const [agentCommand, ...agentArgs] = commandArgs;
   const profile = loadState().profile;
-  const wait = createLocalWaitSession({ agent: agentCommand, workspace: process.cwd(), goal: agentArgs.join(" ") || undefined });
   const transcriptTail: string[] = [];
   const agent = startAgent(agentCommand, agentArgs, (chunk) => {
     for (const line of chunk.split(/\r?\n/).map((item) => item.trim()).filter(Boolean)) {
@@ -55,6 +54,17 @@ async function runCommand(args: string[]): Promise<void> {
       if (transcriptTail.length > 12) transcriptTail.shift();
     }
   });
+
+  try {
+    await agent.started;
+  } catch {
+    const result = await agent.done;
+    printTranscriptTail(transcriptTail);
+    process.exitCode = result.code ?? 127;
+    return;
+  }
+
+  const wait = createLocalWaitSession({ agent: agentCommand, workspace: process.cwd(), goal: agentArgs.join(" ") || undefined });
   const heartbeat = setInterval(() => {
     heartbeatLocalWaitSession(wait.sessionId);
   }, 5_000);

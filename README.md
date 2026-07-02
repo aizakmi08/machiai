@@ -88,7 +88,9 @@ machiai app
 machiai run --overlay -- codex exec "build the feature"
 ```
 
-The overlay is an always-on-top macOS window with drag/drop and click-to-move chess. By default it connects to the public Machiai matchmaking server. Rated queue unlocks from a fresh Machiai wait session or MCP wait session. Open Codex/Claude/Cursor processes are shown as best-effort context only; they do not unlock rated play by themselves. Wrapping with `machiai run --overlay -- ...` is the strict unlock path.
+The overlay is an always-on-top macOS window with drag/drop and click-to-move chess. By default it connects to the public Machiai matchmaking server. Rated queue unlocks from a fresh Machiai wait session, MCP wait session, or a detected one-shot CLI agent command such as `codex exec ...` or `claude -p ...`. Open Codex/Claude/Cursor app windows are shown as best-effort context only unless a reliable running command is visible. Wrapping with `machiai run --overlay -- ...` is the strict unlock path.
+
+On macOS, `machiai run --overlay -- codex ...` automatically falls back to the Codex app-bundled CLI if plain `codex` is not in your shell `PATH`.
 
 Local wait sessions heartbeat while the wrapped command is running. If a terminal is killed or a stale session is left behind, Machiai expires it and locks Start again.
 
