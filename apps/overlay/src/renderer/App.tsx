@@ -46,6 +46,7 @@ type ReactionMessage = { gameId: string; playerId: string; handle: string; react
 type XAuthStart = { ok: boolean; sessionId?: string; authUrl?: string; message?: string; error?: string };
 type XAuthPoll = { ok: boolean; status: "pending" | "complete" | "error" | "missing"; player?: PlayerProfile; error?: string };
 type Premove = { from: string; to: string; promotion: string };
+type AuthAck = { ok: true; player: PlayerProfile; twitterAuthenticated?: boolean; presence: PresenceState };
 
 const REACTIONS = ["💀", "👀", "😂", "🤝"];
 
@@ -186,10 +187,13 @@ export function App() {
         void emitAck(socket, "auth.anonymous", nextBootstrap.profile)
           .then(async (response) => {
             if (isAuthAck(response)) {
-              profileRef.current = response.player;
-              setProfile(response.player);
+              if (response.twitterAuthenticated === false && isTwitterAuthenticated(nextBootstrap.profile)) {
+                await clearStaleAuth(response.player);
+                setMessage("Your X sign-in expired — sign in with X again to play.");
+              } else {
+                await saveServerProfile(response.player);
+              }
               setPresence(response.presence);
-              await saveServerProfile(response.player);
             }
             return syncWait(nextBootstrap.detection);
           })
@@ -208,20 +212,7 @@ export function App() {
       });
       socket.on("queue.status", () => setQueue("searching"));
       socket.on("wait.locked", (error: MachiaiError) => {
-        setQueue("idle");
-        if (error?.code === "auth_required") {
-          // The server no longer recognizes our X token (e.g. it restarted). Return to signed-out UI.
-          void window.machiaiOverlay
-            .signOut()
-            .then((cleared) => {
-              profileRef.current = cleared;
-              setProfile(cleared);
-            })
-            .catch(() => {});
-          setMessage("Your X sign-in expired — sign in with X again to play.");
-        } else {
-          setMessage(error.message);
-        }
+        void handleServerLock(error);
       });
       socket.on("game.started", (nextGame: GameState) => {
         gameIdRef.current = nextGame.gameId;
@@ -380,15 +371,24 @@ export function App() {
     const socket = socketRef.current;
     if (!socket) return;
     try {
+      setMessage("Joining queue.");
       await syncWait(detection);
       const sessionId = activeSessionRef.current ?? detection.sessionId ?? `wait_overlay_${profile.playerId}`;
       const response = await emitAck<{ ok: boolean; error?: MachiaiError }>(socket, "queue.join", { sessionId });
-      if (!response.ok) throw new Error(response.error?.message ?? "Queue rejected.");
+      if (!response.ok) {
+        await handleServerLock(response.error ?? { code: "queue_rejected", message: "Queue rejected." });
+        return;
+      }
       setQueue("searching");
       setMessage("Finding another waiting coder.");
     } catch (error) {
       setQueue("idle");
-      setMessage(errorMessage(error));
+      if (errorCode(error) === "auth_required") {
+        await clearStaleAuth();
+        setMessage("Your X sign-in expired — sign in with X again to play.");
+      } else {
+        setMessage(errorMessage(error));
+      }
     }
   }
 
@@ -405,6 +405,24 @@ export function App() {
     profileRef.current = saved;
     setProfile(saved);
     return saved;
+  }
+
+  async function clearStaleAuth(serverProfile?: PlayerProfile) {
+    if (serverProfile) await window.machiaiOverlay.saveProfile(serverProfile);
+    const cleared = await window.machiaiOverlay.signOut();
+    profileRef.current = cleared;
+    setProfile(cleared);
+    return cleared;
+  }
+
+  async function handleServerLock(error: MachiaiError) {
+    setQueue("idle");
+    if (error?.code === "auth_required") {
+      await clearStaleAuth();
+      setMessage("Your X sign-in expired — sign in with X again to play.");
+      return;
+    }
+    setMessage(error.message);
   }
 
   async function signInWithX() {
@@ -427,7 +445,8 @@ export function App() {
       const saved = await saveServerProfile(nextProfile);
       const socket = socketRef.current;
       if (socket?.connected) {
-        const auth = (await emitAck(socket, "auth.anonymous", saved)) as { player?: PlayerProfile };
+        const auth = (await emitAck(socket, "auth.anonymous", saved)) as AuthAck;
+        if (!auth.twitterAuthenticated) throw new Error("X login was not accepted by the server. Please try again.");
         if (auth.player) await saveServerProfile(auth.player);
       }
       setMessage(`Signed in as ${twitterDisplayName(saved.twitterHandle) ?? saved.displayName ?? saved.handle}.`);
@@ -1160,7 +1179,7 @@ function emitAck<T = unknown>(socket: Socket, event: string, payload: unknown): 
   return new Promise((resolve, reject) => {
     socket.timeout(5000).emit(event, payload, (error: Error | null, response: T) => {
       if (error) reject(error);
-      else if (isErrorAck(response)) reject(new Error(response.error.message));
+      else if (isErrorAck(response)) reject(machiaiError(response.error));
       else resolve(response);
     });
   });
@@ -1170,6 +1189,16 @@ function isErrorAck(value: unknown): value is { ok: false; error: MachiaiError }
   return Boolean(value && typeof value === "object" && "ok" in value && (value as { ok: unknown }).ok === false && "error" in value);
 }
 
-function isAuthAck(value: unknown): value is { ok: true; player: PlayerProfile; presence: PresenceState } {
+function isAuthAck(value: unknown): value is AuthAck {
   return Boolean(value && typeof value === "object" && "presence" in value);
+}
+
+function machiaiError(error: MachiaiError): Error & { code?: string } {
+  const next = new Error(error.message) as Error & { code?: string };
+  next.code = error.code;
+  return next;
+}
+
+function errorCode(error: unknown): string | undefined {
+  return error instanceof Error ? (error as Error & { code?: string }).code : undefined;
 }

@@ -225,6 +225,29 @@ test("auth preserves existing server rating when client profile is stale", async
   await server.stop();
 });
 
+test("auth response reports whether the X token is trusted", async () => {
+  const { server, url, store } = await startTestServer();
+  const alice = signedPlayer("alice");
+  await store.upsertPlayer(alice);
+  const socket = io(url, { transports: ["websocket", "polling"] });
+  await onceSocket(socket, "connect");
+
+  const valid = (await emitAck(socket, "auth.anonymous", alice)) as { player: PlayerProfile; twitterAuthenticated: boolean };
+  assert.equal(valid.twitterAuthenticated, true);
+  assert.equal(valid.player.authToken, alice.authToken);
+
+  const stale = (await emitAck(socket, "auth.anonymous", { ...alice, authToken: "expired_token" })) as {
+    player: PlayerProfile;
+    twitterAuthenticated: boolean;
+  };
+  assert.equal(stale.twitterAuthenticated, false);
+  assert.equal(stale.player.authToken, undefined);
+  assert.equal(stale.player.xUserId, undefined);
+
+  socket.disconnect();
+  await server.stop();
+});
+
 test("profile update sanitizes and stores twitter handle", async () => {
   const { server, url } = await startTestServer();
   const alice = player("alice");

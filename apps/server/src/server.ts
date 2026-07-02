@@ -210,7 +210,7 @@ export class MachiaiServer {
     const responsePlayer = authValid ? player : stripPrivateAuth(player);
     socket.emit("auth.ready", responsePlayer);
     const presence = this.broadcastPresence();
-    ack?.({ ok: true, player: responsePlayer, presence });
+    ack?.({ ok: true, player: responsePlayer, twitterAuthenticated: authValid, presence });
   }
 
   private async onProfileUpdate(socket: Socket, payload: { displayName?: string; handle?: string; twitterHandle?: string }, ack?: (value: unknown) => void) {
