@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { basename } from "node:path";
 import { promisify } from "node:util";
 import type { AgentDetection, WaitSession } from "../../shared/src/index.js";
-import { loadState, type LocalState } from "./local.js";
+import { isFreshWaitSession, loadState, type LocalState } from "./local.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -19,7 +19,7 @@ export interface AgentDetectionOptions {
 export async function detectAgentActivity(options: AgentDetectionOptions = {}): Promise<AgentDetection> {
   const now = options.now ?? new Date();
   const state = options.state ?? loadState();
-  const localSession = latestActiveSession(state.waitSessions);
+  const localSession = latestActiveSession(state.waitSessions, now);
   if (localSession) {
     return {
       status: "active",
@@ -82,9 +82,9 @@ export async function detectAgentActivity(options: AgentDetectionOptions = {}): 
   };
 }
 
-function latestActiveSession(sessions: WaitSession[]): WaitSession | undefined {
+function latestActiveSession(sessions: WaitSession[], now = new Date()): WaitSession | undefined {
   for (let i = sessions.length - 1; i >= 0; i--) {
-    if (sessions[i].active) return sessions[i];
+    if (isFreshWaitSession(sessions[i], now)) return sessions[i];
   }
   return undefined;
 }

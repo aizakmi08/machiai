@@ -37,6 +37,12 @@ npx -y @aizakmi08/machiai demo
 npx -y @aizakmi08/machiai run -- codex exec "build the feature"
 ```
 
+## Agent Gating
+
+Rated Start unlocks only from a fresh Machiai wait session, created by `machiai run --overlay -- ...`, `machiai run -- ...`, or MCP wait-session tools. Open Codex, Claude, Cursor, or terminal processes are best-effort context only and do not unlock rated queue by themselves.
+
+Machiai refreshes local wait-session heartbeats while the wrapped command is alive. If a terminal is killed or an old wait session is left behind, the session expires and Start locks again.
+
 ## Local Development Server
 
 ```bash
@@ -84,6 +90,9 @@ Output:
 - `MACHIAI_HOME`: override local profile/session state directory.
 - `MACHIAI_STORE`: override server persistence path.
 - `MACHIAI_STORE_DRIVER=json`: force JSON persistence instead of SQLite.
+- `DATABASE_URL`: use Postgres persistence for production servers.
+- `REDIS_URL` or `MACHIAI_REDIS_URL`: enable the Socket.IO Redis adapter for multi-instance servers.
+- `MACHIAI_PG_POOL_SIZE`: set the Postgres pool size per server process.
 - `MACHIAI_DISABLE_PTY=1`: force pipe-mode agent wrapping.
 - `MACHIAI_DISABLE_INK=1`: print plain text banner instead of Ink banner.
 - `MACHIAI_OVERLAY_RENDERER_URL`: load a local renderer dev URL in the Electron overlay.

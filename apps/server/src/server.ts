@@ -1,6 +1,8 @@
 import { createHash, randomBytes } from "node:crypto";
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from "node:http";
 import { AddressInfo } from "node:net";
+import { createAdapter } from "@socket.io/redis-adapter";
+import { createClient, type RedisClientType } from "redis";
 import { Server as SocketServer, type Socket } from "socket.io";
 import {
   BOT_FALLBACK_MS,
@@ -83,6 +85,7 @@ export class MachiaiServer {
   private readonly botMoveTimers = new Map<string, NodeJS.Timeout>();
   private readonly xAuthSessions = new Map<string, XAuthSession>();
   private readonly rateBuckets = new Map<string, RateBucket>();
+  private redisClients?: { pub: RedisClientType; sub: RedisClientType };
   private readonly botFallbackMs: number;
   private readonly botMoveMs: number;
   private readonly reconnectGraceMs: number;
@@ -101,6 +104,7 @@ export class MachiaiServer {
 
   async start(port = 4137, host = "127.0.0.1"): Promise<string> {
     this.store = this.options.store ?? (await createStore(this.options.storePath));
+    await this.configureRedisAdapter();
     this.registerSocketHandlers();
     await new Promise<void>((resolve) => this.http.listen(port, host, resolve));
     const address = this.http.address() as AddressInfo;
@@ -113,7 +117,19 @@ export class MachiaiServer {
     for (const timer of this.disconnectTimers.values()) clearTimeout(timer);
     await new Promise<void>((resolve) => this.io.close(() => resolve()));
     await new Promise<void>((resolve) => this.http.close(() => resolve()));
+    await this.redisClients?.pub.quit().catch(() => undefined);
+    await this.redisClients?.sub.quit().catch(() => undefined);
     await this.store?.close();
+  }
+
+  private async configureRedisAdapter(): Promise<void> {
+    const redisUrl = process.env.REDIS_URL ?? process.env.MACHIAI_REDIS_URL;
+    if (!redisUrl) return;
+    const pub = createClient({ url: redisUrl });
+    const sub = pub.duplicate();
+    await Promise.all([pub.connect(), sub.connect()]);
+    this.io.adapter(createAdapter(pub, sub));
+    this.redisClients = { pub, sub };
   }
 
   private registerSocketHandlers(): void {
@@ -456,6 +472,12 @@ export class MachiaiServer {
     if (!game.rated || !game.bothPlayersMoved || !game.result || game.result === "aborted" || this.finalizedRatings.has(game.gameId)) {
       return;
     }
+    const createdAt = new Date().toISOString();
+    const claimed = await this.requiredStore().tryClaimRatingFinalization(game.gameId, createdAt);
+    if (!claimed) {
+      this.finalizedRatings.add(game.gameId);
+      return;
+    }
     this.finalizedRatings.add(game.gameId);
     const white = await this.requiredStore().getPlayer(game.whitePlayerId);
     const black = await this.requiredStore().getPlayer(game.blackPlayerId);
@@ -463,7 +485,6 @@ export class MachiaiServer {
     const rating = calculateRating(white, black, game.result);
     const updatedWhite = await this.requiredStore().updatePlayerRating(white.playerId, rating.white);
     const updatedBlack = await this.requiredStore().updatePlayerRating(black.playerId, rating.black);
-    const createdAt = new Date().toISOString();
     await this.requiredStore().recordRatingEvent({ gameId: game.gameId, playerId: white.playerId, createdAt, ...rating.white });
     await this.requiredStore().recordRatingEvent({ gameId: game.gameId, playerId: black.playerId, createdAt, ...rating.black });
     this.io.to(`player:${white.playerId}`).emit("rating.updated", { player: updatedWhite, rating: rating.white });
@@ -736,6 +757,7 @@ export class MachiaiServer {
       sockets: this.io.sockets.sockets.size,
       onlinePlayers: this.socketsByPlayer.size,
       queuedPlayers: this.queue.length,
+      redisAdapter: Boolean(this.redisClients),
       pendingAuthSessions: [...this.xAuthSessions.values()].filter((session) => session.status === "pending").length,
       botFallbackTimers: this.botTimers.size,
       botMoveTimers: this.botMoveTimers.size,

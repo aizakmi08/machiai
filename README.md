@@ -12,7 +12,7 @@ For most users:
 npx -y @aizakmi08/machiai app
 ```
 
-The overlay opens, asks the user to sign in with X, then unlocks rated chess when an agent is active.
+The overlay opens, asks the user to sign in with X, then unlocks rated chess when an agent is active through Machiai.
 
 Final public setup:
 
@@ -88,7 +88,9 @@ machiai app
 machiai run --overlay -- codex exec "build the feature"
 ```
 
-The overlay is an always-on-top macOS window with drag/drop and click-to-move chess. By default it connects to the public Machiai matchmaking server. It detects active Machiai wait sessions, MCP wait sessions, supported terminal agent processes, and visible Codex/Claude/Cursor app processes. Wrapping with `machiai run --overlay -- ...` is still the strictest unlock path.
+The overlay is an always-on-top macOS window with drag/drop and click-to-move chess. By default it connects to the public Machiai matchmaking server. Rated queue unlocks from a fresh Machiai wait session or MCP wait session. Open Codex/Claude/Cursor processes are shown as best-effort context only; they do not unlock rated play by themselves. Wrapping with `machiai run --overlay -- ...` is the strict unlock path.
+
+Local wait sessions heartbeat while the wrapped command is running. If a terminal is killed or a stale session is left behind, Machiai expires it and locks Start again.
 
 Rated queue requires X login. The package never asks users for API keys.
 
@@ -137,6 +139,17 @@ The server uses SQLite when the Node runtime exposes `node:sqlite`, with JSON fa
 ```bash
 MACHIAI_STORE=.machiai/server-store.sqlite machiai server
 ```
+
+For a scaled production server, use shared Postgres persistence and the Socket.IO Redis adapter:
+
+```bash
+DATABASE_URL=postgres://user:password@host:5432/machiai
+REDIS_URL=redis://default:password@host:6379
+MACHIAI_PG_POOL_SIZE=20
+machiai server
+```
+
+`/stats` exposes sockets, online players, queued players, auth sessions, timers, and rate-limit buckets for basic monitoring.
 
 ## Friend Test
 

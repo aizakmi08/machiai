@@ -86,6 +86,18 @@ test("ended local wait sessions do not unlock the overlay", async () => {
   assert.equal(detection.source, "none");
 });
 
+test("stale active local wait sessions do not unlock the overlay", async () => {
+  const state = stateWithSession(true);
+  state.waitSessions[0].lastHeartbeatAt = "2026-07-01T11:58:00.000Z";
+  const detection = await detectAgentActivity({
+    now,
+    processNames: [],
+    state,
+  });
+  assert.equal(detection.status, "inactive");
+  assert.equal(detection.source, "none");
+});
+
 function stateWithSession(active: boolean): LocalState {
   return {
     profile: {

@@ -64,6 +64,7 @@ The server has built-in per-socket rate limits for auth, profile updates, wait h
   "sockets": 1,
   "onlinePlayers": 1,
   "queuedPlayers": 0,
+  "redisAdapter": true,
   "pendingAuthSessions": 0,
   "botFallbackTimers": 0,
   "botMoveTimers": 0,
@@ -72,14 +73,36 @@ The server has built-in per-socket rate limits for auth, profile updates, wait h
 }
 ```
 
+## Scaled Server Environment
+
+For friend testing, no extra infrastructure is required. The server defaults to local SQLite.
+
+For real production traffic, configure shared persistence and shared Socket.IO pub/sub:
+
+```bash
+DATABASE_URL=postgres://user:password@host:5432/machiai
+REDIS_URL=redis://default:password@host:6379
+MACHIAI_PG_POOL_SIZE=20
+```
+
+What these do:
+
+- `DATABASE_URL` enables the Postgres store for players, X login state, wait sessions, games, moves, leaderboard, and rating events.
+- `REDIS_URL` enables the Socket.IO Redis adapter so game rooms, player rooms, and broadcasts work across multiple server instances.
+- `MACHIAI_PG_POOL_SIZE` controls the Postgres connection pool size per server process.
+
+Postgres also stores a rating-finalization claim per game, so multiple server instances cannot apply the same rated result twice.
+
+If `DATABASE_URL` is absent, Machiai uses SQLite or JSON fallback. If `REDIS_URL` is absent, Machiai uses the default in-process Socket.IO adapter.
+
 ## Scale Readiness
 
-The included Render setup is good for public MVP testing and friend demos, but it is a single Socket.IO process with local SQLite persistence. Do not market that setup as thousands-ready.
+The included Render setup is good for public MVP testing and friend demos when left on local SQLite. With `DATABASE_URL`, `REDIS_URL`, sticky WebSocket sessions, and multiple web instances, Machiai has the core shared-state pieces needed for larger traffic.
 
 Before pushing Machiai to thousands of concurrent users:
 
-- Move persistence to managed Postgres or another network database with backups.
-- Add a Socket.IO Redis adapter or equivalent shared pub/sub before running more than one server instance.
+- Use managed Postgres or another network database with backups.
+- Use Redis-backed Socket.IO pub/sub before running more than one server instance.
 - Enable sticky WebSocket sessions at the load balancer.
 - Move queue/presence/rate-limit state to shared infrastructure when running more than one server instance.
 - Run a load test that covers connection churn, active games, bot fallback, reconnect grace, and leaderboard reads.

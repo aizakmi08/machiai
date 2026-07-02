@@ -242,6 +242,29 @@ test("default store persists players across reopen", async () => {
   await reopened.close();
 });
 
+test("store rating finalization claims are idempotent", async () => {
+  const store = new JsonFileStore();
+  await store.init();
+  assert.equal(await store.tryClaimRatingFinalization("game_once", new Date().toISOString()), true);
+  assert.equal(await store.tryClaimRatingFinalization("game_once", new Date().toISOString()), false);
+  await store.close();
+});
+
+test("postgres store driver requires DATABASE_URL", async () => {
+  const previousDriver = process.env.MACHIAI_STORE_DRIVER;
+  const previousDatabaseUrl = process.env.DATABASE_URL;
+  process.env.MACHIAI_STORE_DRIVER = "postgres";
+  delete process.env.DATABASE_URL;
+  try {
+    await assert.rejects(() => createStore(), /DATABASE_URL is required/);
+  } finally {
+    if (previousDriver === undefined) delete process.env.MACHIAI_STORE_DRIVER;
+    else process.env.MACHIAI_STORE_DRIVER = previousDriver;
+    if (previousDatabaseUrl === undefined) delete process.env.DATABASE_URL;
+    else process.env.DATABASE_URL = previousDatabaseUrl;
+  }
+});
+
 async function startTestServer(options: { botFallbackMs?: number; botMoveMs?: number } = {}) {
   const store = new JsonFileStore();
   const server = new MachiaiServer({

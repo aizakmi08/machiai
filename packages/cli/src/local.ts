@@ -20,6 +20,8 @@ export interface LocalState {
   games: GameState[];
 }
 
+export const LOCAL_WAIT_SESSION_TTL_MS = 45_000;
+
 export function machiaiHome(): string {
   return process.env.MACHIAI_HOME ? resolve(process.env.MACHIAI_HOME) : join(homedir(), ".machiai");
 }
@@ -52,10 +54,19 @@ export function loadState(): LocalState {
 }
 
 function normalizeState(state: LocalState): { state: LocalState; changed: boolean } {
-  if (!state.profile.handle.startsWith("machiai-")) return { state, changed: false };
+  let changed = false;
+  const now = new Date();
+  const waitSessions = state.waitSessions.map((session) => {
+    if (!session.active || isFreshWaitSession(session, now)) return session;
+    changed = true;
+    const endedAt = now.toISOString();
+    return { ...session, active: false, endedAt, lastHeartbeatAt: endedAt };
+  });
+  if (!state.profile.handle.startsWith("machiai-")) return { state: { ...state, waitSessions }, changed };
   return {
     state: {
       ...state,
+      waitSessions,
       profile: {
         ...state.profile,
         handle: state.profile.handle.replace(/^machiai-/, "coder-"),
@@ -131,10 +142,26 @@ export function endLocalWaitSession(sessionId: string): WaitSession | undefined 
   return session;
 }
 
-export function activeLocalWaitSession(): WaitSession | undefined {
+export function heartbeatLocalWaitSession(sessionId: string): WaitSession | undefined {
+  const state = loadState();
+  const now = new Date().toISOString();
+  const session = state.waitSessions.find((item) => item.sessionId === sessionId);
+  if (!session || !session.active) return undefined;
+  session.lastHeartbeatAt = now;
+  saveState(state);
+  return session;
+}
+
+export function isFreshWaitSession(session: WaitSession, now = new Date()): boolean {
+  if (!session.active) return false;
+  const lastHeartbeatMs = Date.parse(session.lastHeartbeatAt || session.startedAt);
+  return Number.isFinite(lastHeartbeatMs) && now.getTime() - lastHeartbeatMs <= LOCAL_WAIT_SESSION_TTL_MS;
+}
+
+export function activeLocalWaitSession(now = new Date()): WaitSession | undefined {
   const sessions = loadState().waitSessions;
   for (let i = sessions.length - 1; i >= 0; i--) {
-    if (sessions[i].active) return sessions[i];
+    if (isFreshWaitSession(sessions[i], now)) return sessions[i];
   }
   return undefined;
 }
@@ -150,7 +177,7 @@ export function upsertLocalGame(game: GameState): GameState {
 
 export function createLocalBotGame(sessionId: string): GameState {
   const state = loadState();
-  const session = state.waitSessions.find((item) => item.sessionId === sessionId && item.active);
+  const session = state.waitSessions.find((item) => item.sessionId === sessionId && isFreshWaitSession(item));
   if (!session) throw new Error("Rated queue is locked until an agent is running.");
   const game = createGame({
     mode: "bot",

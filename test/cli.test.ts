@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { loadState, saveProfile } from "../packages/cli/src/local.js";
+import { activeLocalWaitSession, createLocalWaitSession, heartbeatLocalWaitSession, loadState, saveProfile } from "../packages/cli/src/local.js";
 
 const cli = join(process.cwd(), "dist", "packages", "cli", "src", "cli.js");
 
@@ -118,6 +118,23 @@ test("profile save can clear twitter handle", () => {
     saveProfile({ ...initial, twitterHandle: "coder_dev", updatedAt: new Date().toISOString() });
     saveProfile({ ...initial, twitterHandle: undefined, updatedAt: new Date().toISOString() });
     assert.equal(loadState().profile.twitterHandle, undefined);
+  } finally {
+    if (previousHome === undefined) delete process.env.MACHIAI_HOME;
+    else process.env.MACHIAI_HOME = previousHome;
+  }
+});
+
+test("local wait sessions expire unless heartbeated", () => {
+  const previousHome = process.env.MACHIAI_HOME;
+  const home = mkdtempSync(join(tmpdir(), "machiai-wait-heartbeat-"));
+  process.env.MACHIAI_HOME = home;
+  try {
+    const session = createLocalWaitSession({ agent: "codex" });
+    assert.equal(activeLocalWaitSession(new Date(Date.parse(session.lastHeartbeatAt) + 20_000))?.sessionId, session.sessionId);
+    assert.equal(activeLocalWaitSession(new Date(Date.parse(session.lastHeartbeatAt) + 90_000)), undefined);
+    const heartbeated = heartbeatLocalWaitSession(session.sessionId);
+    assert.ok(heartbeated);
+    assert.equal(activeLocalWaitSession(new Date(Date.parse(heartbeated.lastHeartbeatAt) + 20_000))?.sessionId, session.sessionId);
   } finally {
     if (previousHome === undefined) delete process.env.MACHIAI_HOME;
     else process.env.MACHIAI_HOME = previousHome;

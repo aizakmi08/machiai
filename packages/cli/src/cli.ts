@@ -6,7 +6,16 @@ import { startAgent } from "./agent.js";
 import { parseCommandAfterDoubleDash, hasFlag, readOption, serverUrl } from "./config.js";
 import { runDemo } from "./demo.js";
 import { renderInkBanner } from "./ink-banner.js";
-import { activeLocalWaitSession, createLocalBotGame, createLocalWaitSession, endLocalWaitSession, loadState, statePath, updateProfile } from "./local.js";
+import {
+  activeLocalWaitSession,
+  createLocalBotGame,
+  createLocalWaitSession,
+  endLocalWaitSession,
+  heartbeatLocalWaitSession,
+  loadState,
+  statePath,
+  updateProfile,
+} from "./local.js";
 import { fetchLeaderboard, playOnline } from "./online.js";
 import { playLocalBotGame, printHero, printTranscriptTail } from "./ui.js";
 
@@ -46,7 +55,12 @@ async function runCommand(args: string[]): Promise<void> {
       if (transcriptTail.length > 12) transcriptTail.shift();
     }
   });
+  const heartbeat = setInterval(() => {
+    heartbeatLocalWaitSession(wait.sessionId);
+  }, 5_000);
+  heartbeat.unref?.();
   const agentDone = agent.done.then((result) => {
+    clearInterval(heartbeat);
     endLocalWaitSession(wait.sessionId);
     return result;
   });
