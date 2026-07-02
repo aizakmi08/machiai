@@ -85,6 +85,18 @@ export interface GameState {
   bothPlayersMoved: boolean;
 }
 
+export interface MatchRecord {
+  gameId: string;
+  playedAt: string;
+  mode: GameMode;
+  rated: boolean;
+  result: "win" | "loss" | "draw";
+  opponentHandle: string;
+  opponentTwitter?: string;
+  mmrDelta?: number;
+  mmrAfter?: number;
+}
+
 export interface RatingInput {
   mmr: number;
   ratedGames: number;

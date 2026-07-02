@@ -13,10 +13,14 @@ import {
   endLocalWaitSession,
   heartbeatLocalWaitSession,
   loadState,
+  setReferenceSelector,
   statePath,
   updateProfile,
 } from "./local.js";
 import { fetchLeaderboard, playOnline } from "./online.js";
+import { linkHooks, unlinkHooks } from "./hook-install.js";
+import { resolveReference, scanRegistry } from "./session-registry.js";
+import { DEFAULT_REFERENCE_SELECTOR, type AgentSessionSummary, type ReferenceSelector } from "../../shared/src/index.js";
 import { playLocalBotGame, printHero, printTranscriptTail } from "./ui.js";
 
 const args = process.argv.slice(2);
@@ -30,6 +34,10 @@ try {
   else if (command === "leaderboard") await leaderboardCommand();
   else if (command === "demo") await runDemo();
   else if (command === "server") await serverCommand(args.slice(1));
+  else if (command === "sessions") sessionsCommand();
+  else if (command === "watch") watchCommand(args.slice(1));
+  else if (command === "link") linkCommand();
+  else if (command === "unlink") unlinkCommand();
   else if (command === "mcp-config") mcpConfigCommand();
   else if (command === "serve") await import("./mcp.js");
   else help();
@@ -149,6 +157,114 @@ async function serverCommand(args: string[]): Promise<void> {
   console.log(`Set MACHIAI_SERVER_URL=${url}`);
 }
 
+function sessionsCommand(): void {
+  const now = new Date();
+  const state = loadState();
+  const sessions = scanRegistry(now, state.waitSessions);
+  const selector = state.referenceSelector ?? DEFAULT_REFERENCE_SELECTOR;
+  const resolution = resolveReference(sessions, selector);
+
+  if (sessions.length === 0) {
+    console.log("No live agent sessions detected in the last 6 hours.");
+    console.log("Start Claude Code or Codex, or run `machiai link` for exact hook-based detection.");
+    return;
+  }
+
+  console.log(`Live agent sessions (${sessions.length}):\n`);
+  for (const session of sessions) {
+    const pin = resolution.matched?.id === session.id || resolution.idleMatch?.id === session.id ? "→" : " ";
+    const place = [session.workspace ? basenameOf(session.workspace) : undefined, session.gitBranch]
+      .filter(Boolean)
+      .join(" @ ");
+    console.log(
+      `${pin} ${stateBadge(session.state)}  ${pad(session.agent, 7)} ${pad(session.surface, 9)} ` +
+        `${pad(place, 22)} ${pad(session.title ?? "", 34)} ${formatAge(session.lastEventAt, now)}`,
+    );
+  }
+
+  console.log(`\nWatching: ${describeSelector(selector)}`);
+  if (resolution.matched) {
+    console.log(`UNLOCKED — new game allowed (${resolution.matched.agent} is running).`);
+  } else if (resolution.idleMatch) {
+    console.log(`LOCKED — ${resolution.idleMatch.agent} finished its turn. Prompt it to unlock a new game.`);
+  } else {
+    console.log("LOCKED — no matching agent is running. Start/prompt an agent to unlock a new game.");
+  }
+  console.log("\nChange focus with: machiai watch [--auto | --agent codex|claude | --surface terminal|app | --session <id>]");
+}
+
+function watchCommand(args: string[]): void {
+  let selector: ReferenceSelector | undefined;
+  const sessionId = readOption(args, "--session");
+  const agent = readOption(args, "--agent");
+  const surface = readOption(args, "--surface");
+  if (hasFlag(args, "--auto")) selector = { kind: "auto" };
+  else if (sessionId) selector = { kind: "session", sessionId };
+  else if (agent || surface) selector = { kind: "filter", agent: agent ?? "any", surface: normalizeSurface(surface) };
+
+  if (!selector) {
+    console.log("Usage: machiai watch [--auto | --agent codex|claude | --surface terminal|app | --session <id>]");
+    console.log(`Current: ${describeSelector(loadState().referenceSelector ?? DEFAULT_REFERENCE_SELECTOR)}`);
+    return;
+  }
+  setReferenceSelector(selector);
+  console.log(`Now watching: ${describeSelector(selector)}`);
+}
+
+function linkCommand(): void {
+  const summaries = linkHooks();
+  console.log("Installed Machiai detection hooks (existing hooks were preserved):");
+  for (const summary of summaries) {
+    console.log(`  ${summary.agent}: ${summary.file} [${summary.events.join(", ")}]${summary.created ? " (created)" : ""}`);
+  }
+  console.log("\nNew Claude Code / Codex sessions now report start, prompt, and stop events to Machiai.");
+  console.log("Undo any time with: machiai unlink");
+}
+
+function unlinkCommand(): void {
+  const summaries = unlinkHooks();
+  console.log("Removed Machiai detection hooks:");
+  for (const summary of summaries) {
+    console.log(`  ${summary.agent}: ${summary.file}`);
+  }
+}
+
+function describeSelector(selector: ReferenceSelector): string {
+  if (selector.kind === "auto") return "auto (the most recently active running session)";
+  if (selector.kind === "session") return `session ${selector.sessionId}`;
+  const agent = selector.agent && selector.agent !== "any" ? selector.agent : "any agent";
+  const surface = selector.surface && selector.surface !== "any" ? selector.surface : "any surface";
+  return `${agent} / ${surface}`;
+}
+
+function normalizeSurface(value: string | undefined): AgentSessionSummary["surface"] | "any" {
+  if (value === "terminal" || value === "app") return value;
+  return "any";
+}
+
+function stateBadge(state: AgentSessionSummary["state"]): string {
+  if (state === "running") return "● running";
+  if (state === "idle") return "○ idle   ";
+  return "· ended  ";
+}
+
+function basenameOf(path: string): string {
+  const parts = path.split("/").filter(Boolean);
+  return parts[parts.length - 1] ?? path;
+}
+
+function pad(value: string, width: number): string {
+  const clipped = value.length > width ? `${value.slice(0, width - 1)}…` : value;
+  return clipped.padEnd(width);
+}
+
+function formatAge(iso: string, now: Date): string {
+  const ms = Math.max(0, now.getTime() - Date.parse(iso));
+  if (ms < 60_000) return `${Math.round(ms / 1000)}s ago`;
+  if (ms < 3_600_000) return `${Math.round(ms / 60_000)}m ago`;
+  return `${Math.round(ms / 3_600_000)}h ago`;
+}
+
 function mcpConfigCommand(): void {
   console.log(
     JSON.stringify(
@@ -175,6 +291,10 @@ Commands:
   machiai run -- <command...>       Run an agent and unlock chess
   machiai run --overlay -- <cmd...> Run an agent and open the overlay
   machiai play                      Play only if a local wait session is active
+  machiai sessions                  List live agent sessions and the current unlock focus
+  machiai watch [--auto|--agent|--surface|--session]  Choose which session(s) unlock a new game
+  machiai link                      Install exact detection hooks into Claude Code + Codex
+  machiai unlink                    Remove Machiai detection hooks
   machiai profile [--name <name>] [--twitter <handle>]  Show or update anonymous profile
   machiai leaderboard               Show hosted leaderboard
   machiai demo                      Run a local two-client demo

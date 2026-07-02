@@ -4,12 +4,15 @@ import { io, type Socket } from "socket.io-client";
 import { isTwitterAuthenticated, normalizeTwitterHandle, twitterDisplayName, twitterUrl } from "../../../../packages/shared/src/profile.js";
 import type {
   AgentDetection,
+  AgentSessionSummary,
   Color,
   GameState,
   MachiaiError,
+  MatchRecord,
   OverlayBootstrap,
   PlayerProfile,
   PresenceState,
+  ReferenceSelector,
 } from "../../../../packages/shared/src/index.js";
 
 const START_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
@@ -51,6 +54,7 @@ export function App() {
   const activeSessionRef = useRef<string | undefined>(undefined);
   const profileRef = useRef<PlayerProfile | undefined>(undefined);
   const gameStatusRef = useRef<GameState["status"] | undefined>(undefined);
+  const gameIdRef = useRef<string | undefined>(undefined); // the current/just-ended game, for rating correlation
   const [bootstrap, setBootstrap] = useState<OverlayBootstrap | undefined>();
   const [profile, setProfile] = useState<PlayerProfile | undefined>();
   const [editingName, setEditingName] = useState(false);
@@ -72,6 +76,12 @@ export function App() {
   const [reaction, setReaction] = useState<ReactionMessage | undefined>();
   const [matchFound, setMatchFound] = useState(false);
   const [signingIn, setSigningIn] = useState(false);
+  const [showDetection, setShowDetection] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [matches, setMatches] = useState<MatchRecord[]>([]);
+  const [linking, setLinking] = useState(false);
+  const [linked, setLinked] = useState(false);
+  const [panelNote, setPanelNote] = useState<string | undefined>();
   const [, setClockTick] = useState(0);
 
   const playerColor = useMemo(() => {
@@ -129,6 +139,34 @@ export function App() {
     }
   }, [syncWait]);
 
+  const chooseReference = useCallback(
+    async (selector: ReferenceSelector) => {
+      try {
+        setPanelNote(undefined);
+        const next = await window.machiaiOverlay.setReference(selector);
+        setDetection(next);
+        await syncWait(next);
+      } catch (error) {
+        setPanelNote(errorMessage(error));
+      }
+    },
+    [syncWait],
+  );
+
+  const enableExactDetection = useCallback(async () => {
+    setLinking(true);
+    setPanelNote(undefined);
+    try {
+      await window.machiaiOverlay.linkHooks();
+      setLinked(true);
+      await refreshDetection();
+    } catch (error) {
+      setPanelNote(errorMessage(error));
+    } finally {
+      setLinking(false);
+    }
+  }, [refreshDetection]);
+
   useEffect(() => {
     let disposed = false;
     void window.machiaiOverlay.bootstrap().then((nextBootstrap) => {
@@ -138,6 +176,7 @@ export function App() {
       setProfile(nextBootstrap.profile);
       setDetection(nextBootstrap.detection);
       setMessage(nextBootstrap.detection.reason);
+      void window.machiaiOverlay.listMatches().then(setMatches).catch(() => {});
 
       const socket = io(nextBootstrap.serverUrl, { transports: ["websocket", "polling"], timeout: 8000 });
       socketRef.current = socket;
@@ -172,6 +211,7 @@ export function App() {
         setMessage(error.message);
       });
       socket.on("game.started", (nextGame: GameState) => {
+        gameIdRef.current = nextGame.gameId;
         setGame(nextGame);
         setQueue("in_game");
         setSelected(undefined);
@@ -190,16 +230,34 @@ export function App() {
         setMovePending(false);
       });
       socket.on("game.ended", (nextGame: GameState) => {
+        gameIdRef.current = nextGame.gameId;
         setGame(nextGame);
         setQueue("idle");
         setSelected(undefined);
         setPremove(undefined);
         setMovePending(false);
-        setMessage(resultMessage(nextGame, profileRef.current?.playerId ?? nextBootstrap.profile.playerId));
+        const playerId = profileRef.current?.playerId ?? nextBootstrap.profile.playerId;
+        setMessage(resultMessage(nextGame, playerId));
+        const record = buildMatchRecord(nextGame, playerId);
+        if (record) {
+          void window.machiaiOverlay
+            .recordMatch(record)
+            .then(() => window.machiaiOverlay.listMatches())
+            .then(setMatches)
+            .catch(() => {});
+        }
       });
       socket.on("rating.updated", (payload: { player: PlayerProfile; rating: { delta: number } }) => {
         void saveServerProfile(payload.player).catch((error) => setMessage(errorMessage(error)));
         setRatingDelta(payload.rating.delta);
+        const ratedGameId = gameIdRef.current;
+        if (ratedGameId) {
+          void window.machiaiOverlay
+            .ratingResult(ratedGameId, payload.rating.delta, payload.player.mmr)
+            .then(() => window.machiaiOverlay.listMatches())
+            .then(setMatches)
+            .catch(() => {});
+        }
       });
       socket.on("presence.updated", (nextPresence: PresenceState) => setPresence(nextPresence));
       socket.on("reaction.received", (payload: ReactionMessage) => {
@@ -252,10 +310,36 @@ export function App() {
   const topClock = game ? (playerColor === "white" ? game.clocks.blackMs : game.clocks.whiteMs) : 3 * 60 * 1000;
   const bottomClock = game ? (playerColor === "white" ? game.clocks.whiteMs : game.clocks.blackMs) : 3 * 60 * 1000;
   const serverHost = bootstrap ? new URL(bootstrap.serverUrl).host : "server";
-  const startLabel = connection !== "online" ? "Connecting" : !signedIn ? (signingIn ? "Signing in" : "Sign in with X") : detection?.status === "active" ? "Start" : "No agent";
+  const startLabel =
+    connection !== "online"
+      ? "Connecting…"
+      : !signedIn
+        ? signingIn
+          ? "Signing in…"
+          : "Sign in with X to play"
+        : detection?.status === "active"
+          ? "Start game"
+          : "Start an agent to play";
   const resultTone = game?.status === "ended" ? resultForPlayerColor(game, playerColor) : "none";
   const lastMoveLabel = lastMove ? `${lastMove.color === playerColor ? "You" : "Last"}: ${lastMove.san}` : "";
   const pendingPremoveLabel = premove ? `Premove: ${premove.from}-${premove.to}` : "";
+  const footerText = agentFinished
+    ? "Agent finished — you can finish this game, but not start a new one."
+    : queue === "searching"
+      ? "Searching… a bot joins if the lobby is empty."
+      : game?.status === "ended"
+        ? message
+        : game?.status === "active"
+          ? lastMoveLabel || "Your move."
+          : detection?.status === "active"
+            ? signedIn
+              ? `${detection.agent ?? "Agent"} is running — press Start game.`
+              : `${detection.agent ?? "An agent"} is running — sign in with X to play.`
+            : detection?.status === "maybe"
+              ? "Agent is idle — send it a prompt to unlock a new game."
+              : detection?.status === "inactive"
+                ? "No agent running. Start Claude or Codex, then press Start."
+                : message;
 
   useEffect(() => {
     if (!premove || !game || game.status !== "active" || game.turn !== playerColor || movePending) return;
@@ -465,6 +549,18 @@ export function App() {
       <header className="topbar">
         <strong>Machiai</strong>
         <div className="topActions">
+          <button
+            type="button"
+            className={`histBtn ${showHistory ? "open" : ""}`}
+            onClick={() => {
+              setShowHistory((value) => !value);
+              setShowDetection(false);
+            }}
+            title="Match history"
+            aria-expanded={showHistory}
+          >
+            Games
+          </button>
           <span className="onlineCount" aria-label={`${presence?.onlinePlayers ?? 0} players online`}>
             {formatOnlineCount(presence?.onlinePlayers, connection)}
           </span>
@@ -472,9 +568,126 @@ export function App() {
       </header>
 
       <section className="statusBar">
-        <span className={`pill ${detection?.status ?? "inactive"}`}>{agentLabel(detection)}</span>
+        <button
+          type="button"
+          className={`statusChip detect-${detection?.status ?? "inactive"} ${showDetection ? "open" : ""}`}
+          onClick={() => {
+            setShowDetection((value) => !value);
+            setShowHistory(false);
+          }}
+          title="Choose which agent unlocks chess"
+          aria-expanded={showDetection}
+        >
+          <span className={`dot ${detection?.status ?? "inactive"}`} aria-hidden />
+          <span className="chipText">{detectionHeadline(detection)}</span>
+          <span className="caret">▾</span>
+        </button>
         <span className={`pill ${connection}`}>{connectionLabel(connection, serverHost)}</span>
       </section>
+
+      {showDetection ? (
+        <div className="detectionPanel" role="dialog" aria-label="Detection settings">
+          <div className="detectionHead">
+            <strong>Detection</strong>
+            <button type="button" className="panelClose" onClick={() => setShowDetection(false)} aria-label="Close">
+              ✕
+            </button>
+          </div>
+
+          <p className="detectExplain">Chess unlocks only while a coding agent is working. Choose which one to watch:</p>
+
+          <select
+            className="detectSelect"
+            value={selectorToValue(detection?.reference)}
+            onChange={(event) => void chooseReference(valueToSelector(event.currentTarget.value))}
+          >
+            <option value="auto">Auto — whichever agent is working</option>
+            <option value="agent:claude">Only Claude</option>
+            <option value="agent:codex">Only Codex</option>
+            <option value="surface:terminal">Only terminal sessions</option>
+            <option value="surface:app">Only app sessions</option>
+            {(detection?.sessions ?? []).length > 0 ? (
+              <optgroup label="One specific session">
+                {(detection?.sessions ?? []).map((session) => (
+                  <option key={session.id} value={`session:${session.id}`}>
+                    {sessionOptionLabel(session)}
+                  </option>
+                ))}
+              </optgroup>
+            ) : null}
+          </select>
+
+          <div className="sessionList">
+            {(detection?.sessions ?? []).length === 0 ? (
+              <p className="sessionEmpty">No agent sessions yet. Start Claude Code or Codex and it appears here.</p>
+            ) : (
+              (detection?.sessions ?? []).map((session) => (
+                <button
+                  key={session.id}
+                  type="button"
+                  className={`sessionRow ${
+                    detection?.reference?.kind === "session" && detection.reference.sessionId === session.id ? "active" : ""
+                  }`}
+                  onClick={() => void chooseReference({ kind: "session", sessionId: session.id })}
+                  title={session.workspace ?? session.id}
+                >
+                  <span className={`stateDot ${session.state}`} aria-hidden />
+                  <span className="sessMain">{session.title || shortWorkspace(session.workspace) || session.agent}</span>
+                  <span className="sessMeta">
+                    {session.agent}
+                    {session.surface !== "unknown" ? ` · ${session.surface}` : ""}
+                  </span>
+                </button>
+              ))
+            )}
+          </div>
+
+          {panelNote ? (
+            <p className="panelNote">{panelNote}</p>
+          ) : detection?.reference ? (
+            <p className="panelNote">Watching {describeSelector(detection.reference)}.</p>
+          ) : null}
+
+          <div className="detectFoot">
+            {linked ? (
+              <span className="linkDone">✓ Exact detection enabled</span>
+            ) : (
+              <button type="button" className="linkBtn" disabled={linking} onClick={() => void enableExactDetection()}>
+                {linking ? "Enabling…" : "Enable exact detection"}
+              </button>
+            )}
+            <span className="detectHint">Most accurate — adds Claude/Codex start &amp; stop hooks. Optional.</span>
+          </div>
+        </div>
+      ) : null}
+
+      {showHistory ? (
+        <div className="detectionPanel historyPanel" role="dialog" aria-label="Match history">
+          <div className="detectionHead">
+            <strong>Match history</strong>
+            <button type="button" className="panelClose" onClick={() => setShowHistory(false)} aria-label="Close">
+              ✕
+            </button>
+          </div>
+          {matches.length === 0 ? (
+            <p className="sessionEmpty">No games yet. Play a 3+0 game while your agent works and it shows up here.</p>
+          ) : (
+            <>
+              <p className="matchSummary">{matchSummary(matches)}</p>
+              <div className="matchList">
+                {matches.map((match) => (
+                  <div key={match.gameId} className="matchRow">
+                    <span className={`resultTag ${match.result}`}>{match.result === "win" ? "W" : match.result === "loss" ? "L" : "D"}</span>
+                    <span className="matchOpp">{match.opponentTwitter ? `@${match.opponentTwitter}` : match.opponentHandle}</span>
+                    <span className="matchDelta">{matchDeltaLabel(match)}</span>
+                    <span className="matchAge">{timeAgo(match.playedAt)}</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      ) : null}
 
       <section className="gamePanel">
         <div className="playArea">
@@ -643,19 +856,7 @@ export function App() {
       </section>
 
       <footer>
-        <span>
-          {agentFinished
-            ? "Agent finished. Finish this game."
-            : queue === "searching"
-              ? "Searching. Bot starts if lobby is empty."
-              : signedIn || signingIn
-                ? detection?.status === "maybe"
-                  ? "Agent app detected. Use machiai run --overlay for rated unlock."
-                  : detection?.status === "active" && game?.status !== "ended"
-                    ? detection.reason
-                  : message
-                : "Sign in with X to play rated."}
-        </span>
+        <span>{footerText}</span>
       </footer>
     </main>
   );
@@ -791,11 +992,45 @@ function formatClock(ms: number): string {
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
-function agentLabel(detection: AgentDetection | undefined): string {
-  if (!detection) return "checking";
-  if (detection.status === "active") return "agent active";
-  if (detection.status === "maybe") return "agent maybe";
-  return "agent idle";
+function detectionHeadline(detection: AgentDetection | undefined): string {
+  if (!detection) return "checking…";
+  if (detection.status === "active") return `${detection.agent ?? "agent"} running`;
+  if (detection.status === "maybe") return "agent idle";
+  return "no agent";
+}
+
+function selectorToValue(selector: ReferenceSelector | undefined): string {
+  if (!selector || selector.kind === "auto") return "auto";
+  if (selector.kind === "session") return `session:${selector.sessionId}`;
+  if (selector.agent && selector.agent !== "any") return `agent:${selector.agent}`;
+  if (selector.surface && selector.surface !== "any") return `surface:${selector.surface}`;
+  return "auto";
+}
+
+function valueToSelector(value: string): ReferenceSelector {
+  if (value.startsWith("session:")) return { kind: "session", sessionId: value.slice("session:".length) };
+  if (value.startsWith("agent:")) return { kind: "filter", agent: value.slice("agent:".length) };
+  if (value.startsWith("surface:")) return { kind: "filter", surface: value.slice("surface:".length) as AgentSessionSummary["surface"] };
+  return { kind: "auto" };
+}
+
+function describeSelector(selector: ReferenceSelector): string {
+  if (selector.kind === "auto") return "the most active session";
+  if (selector.kind === "session") return "one specific session";
+  if (selector.agent && selector.agent !== "any") return `${selector.agent} sessions`;
+  if (selector.surface && selector.surface !== "any") return `${selector.surface} sessions`;
+  return "any session";
+}
+
+function sessionOptionLabel(session: AgentSessionSummary): string {
+  const name = session.title || shortWorkspace(session.workspace) || session.agent;
+  return `${session.agent} · ${name} — ${session.state}`;
+}
+
+function shortWorkspace(path: string | undefined): string {
+  if (!path) return "";
+  const parts = path.split("/").filter(Boolean);
+  return parts[parts.length - 1] ?? path;
 }
 
 function connectionLabel(connection: ConnectionState, host: string): string {
@@ -836,6 +1071,44 @@ function resultForPlayerColor(game: GameState | undefined, color: Color): "win" 
   if (game.result === "draw") return "draw";
   if (game.result === "white_win") return color === "white" ? "win" : "loss";
   return color === "black" ? "win" : "loss";
+}
+
+function buildMatchRecord(game: GameState, playerId: string): MatchRecord | undefined {
+  const color: Color | undefined = game.whitePlayerId === playerId ? "white" : game.blackPlayerId === playerId ? "black" : undefined;
+  if (!color) return undefined; // player isn't in this game (e.g. mid profile-id transition) — don't record a wrong result
+  const result = resultForPlayerColor(game, color);
+  if (result === "none") return undefined; // aborted games are not recorded
+  return {
+    gameId: game.gameId,
+    playedAt: game.endedAt ?? new Date().toISOString(),
+    mode: game.mode,
+    rated: game.rated,
+    result,
+    opponentHandle: color === "white" ? game.blackHandle : game.whiteHandle,
+    opponentTwitter: color === "white" ? game.blackTwitterHandle : game.whiteTwitterHandle,
+  };
+}
+
+function matchSummary(matches: MatchRecord[]): string {
+  const w = matches.filter((m) => m.result === "win").length;
+  const l = matches.filter((m) => m.result === "loss").length;
+  const d = matches.filter((m) => m.result === "draw").length;
+  return `${w}W · ${l}L · ${d}D`;
+}
+
+function matchDeltaLabel(match: MatchRecord): string {
+  if (match.rated && match.mmrDelta !== undefined) return match.mmrDelta > 0 ? `+${match.mmrDelta}` : `${match.mmrDelta}`;
+  if (match.mode === "bot") return "practice";
+  return "—";
+}
+
+function timeAgo(iso: string): string {
+  const ms = Date.now() - Date.parse(iso);
+  if (!Number.isFinite(ms) || ms < 0) return "";
+  if (ms < 60_000) return "now";
+  if (ms < 3_600_000) return `${Math.round(ms / 60_000)}m`;
+  if (ms < 86_400_000) return `${Math.round(ms / 3_600_000)}h`;
+  return `${Math.round(ms / 86_400_000)}d`;
 }
 
 function errorMessage(error: unknown): string {

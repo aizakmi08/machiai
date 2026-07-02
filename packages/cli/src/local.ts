@@ -10,7 +10,9 @@ import {
   createId,
   normalizeTwitterHandle,
   type GameState,
+  type MatchRecord,
   type PlayerProfile,
+  type ReferenceSelector,
   type WaitSession,
 } from "../../shared/src/index.js";
 
@@ -18,7 +20,14 @@ export interface LocalState {
   profile: PlayerProfile;
   waitSessions: WaitSession[];
   games: GameState[];
+  referenceSelector?: ReferenceSelector;
+  matches?: MatchRecord[];
+  /** Ratings that arrived before their match was recorded, keyed by gameId. */
+  pendingRatings?: Record<string, { mmrDelta: number; mmrAfter: number }>;
 }
+
+const MAX_STORED_MATCHES = 200;
+const MAX_PENDING_RATINGS = 50;
 
 export const LOCAL_WAIT_SESSION_TTL_MS = 45_000;
 
@@ -110,6 +119,55 @@ export function saveProfile(profile: PlayerProfile): PlayerProfile {
   };
   saveState(state);
   return state.profile;
+}
+
+export function recordMatch(record: MatchRecord): MatchRecord {
+  const state = loadState();
+  const pending = state.pendingRatings?.[record.gameId];
+  const finalRecord: MatchRecord = pending ? { ...record, mmrDelta: pending.mmrDelta, mmrAfter: pending.mmrAfter } : record;
+  const matches = state.matches ?? [];
+  const index = matches.findIndex((item) => item.gameId === finalRecord.gameId);
+  if (index >= 0) matches[index] = { ...matches[index], ...finalRecord };
+  else matches.push(finalRecord);
+  state.matches = matches.slice(-MAX_STORED_MATCHES);
+  if (pending && state.pendingRatings) delete state.pendingRatings[record.gameId];
+  saveState(state);
+  return finalRecord;
+}
+
+/** Attach a rating to its game by id; if the match isn't recorded yet, buffer it (events can race). */
+export function attachMatchRating(gameId: string, mmrDelta: number, mmrAfter: number): MatchRecord | undefined {
+  const state = loadState();
+  const matches = state.matches ?? [];
+  const index = matches.findIndex((item) => item.gameId === gameId);
+  if (index >= 0) {
+    matches[index] = { ...matches[index], mmrDelta, mmrAfter };
+    state.matches = matches;
+    saveState(state);
+    return matches[index];
+  }
+  const pending = { ...(state.pendingRatings ?? {}), [gameId]: { mmrDelta, mmrAfter } };
+  const keys = Object.keys(pending);
+  for (const key of keys.slice(0, Math.max(0, keys.length - MAX_PENDING_RATINGS))) delete pending[key];
+  state.pendingRatings = pending;
+  saveState(state);
+  return undefined;
+}
+
+export function recentMatches(limit = 25): MatchRecord[] {
+  const matches = loadState().matches ?? [];
+  return matches.slice(-limit).reverse();
+}
+
+export function getReferenceSelector(): ReferenceSelector | undefined {
+  return loadState().referenceSelector;
+}
+
+export function setReferenceSelector(selector: ReferenceSelector): ReferenceSelector {
+  const state = loadState();
+  state.referenceSelector = selector;
+  saveState(state);
+  return selector;
 }
 
 export function createLocalWaitSession(input: { agent: string; workspace?: string; goal?: string }): WaitSession {

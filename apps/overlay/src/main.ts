@@ -6,9 +6,20 @@ import { fileURLToPath } from "node:url";
 import { app, BrowserWindow, ipcMain, screen, shell, type Rectangle } from "electron";
 import { MachiaiServer } from "../../server/src/server.js";
 import { detectAgentActivity } from "../../../packages/cli/src/agent-detector.js";
-import { activeLocalWaitSession, loadState, machiaiHome, saveProfile, updateProfile } from "../../../packages/cli/src/local.js";
+import {
+  activeLocalWaitSession,
+  attachMatchRating,
+  loadState,
+  machiaiHome,
+  recentMatches,
+  recordMatch,
+  saveProfile,
+  setReferenceSelector,
+  updateProfile,
+} from "../../../packages/cli/src/local.js";
+import { linkHooks } from "../../../packages/cli/src/hook-install.js";
 import { serverUrl } from "../../../packages/cli/src/config.js";
-import type { OverlayBootstrap, PlayerProfile, SnapResult } from "../../../packages/shared/src/index.js";
+import type { MatchRecord, OverlayBootstrap, PlayerProfile, ReferenceSelector, SnapResult } from "../../../packages/shared/src/index.js";
 
 const execFileAsync = promisify(execFile);
 const here = dirname(fileURLToPath(import.meta.url));
@@ -102,6 +113,14 @@ function registerIpc(): void {
   });
 
   ipcMain.handle("machiai:detect-agent", async () => detectAgentActivity());
+  ipcMain.handle("machiai:set-reference", async (_event, selector: ReferenceSelector) => {
+    setReferenceSelector(selector);
+    return detectAgentActivity();
+  });
+  ipcMain.handle("machiai:link-hooks", async () => linkHooks());
+  ipcMain.handle("machiai:record-match", (_event, record: MatchRecord) => recordMatch(record));
+  ipcMain.handle("machiai:rating-result", (_event, gameId: string, mmrDelta: number, mmrAfter: number) => attachMatchRating(gameId, mmrDelta, mmrAfter));
+  ipcMain.handle("machiai:list-matches", () => recentMatches());
   ipcMain.handle("machiai:update-profile", (_event, displayName: string, twitterHandle?: string) => updateProfile(displayName.trim(), twitterHandle));
   ipcMain.handle("machiai:save-profile", (_event, profile: PlayerProfile) => saveProfile(profile));
   ipcMain.handle("machiai:open-external", async (_event, url: string): Promise<void> => {

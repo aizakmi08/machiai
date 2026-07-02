@@ -65,6 +65,10 @@ machiai app --local               # open overlay with a private local server
 machiai run -- <command...>       # run an agent and unlock chess
 machiai run --overlay -- <cmd...> # run an agent and open the overlay
 machiai play                      # play only if a local wait session is active
+machiai sessions                  # list live agent sessions and the current unlock focus
+machiai watch [--auto|--agent|--surface|--session]  # choose which session(s) unlock a game
+machiai link                      # install exact detection hooks into Claude Code + Codex
+machiai unlink                    # remove Machiai detection hooks
 machiai profile [--name <name>] [--twitter <handle>] # show/update anonymous profile
 machiai leaderboard               # show hosted leaderboard
 machiai demo                      # run a local two-client demo
@@ -88,11 +92,23 @@ machiai app
 machiai run --overlay -- codex exec "build the feature"
 ```
 
-The overlay is an always-on-top macOS window with drag/drop and click-to-move chess. By default it connects to the public Machiai matchmaking server. Rated queue unlocks from a fresh Machiai wait session, MCP wait session, detected one-shot CLI agent command such as `codex exec ...` or `claude -p ...`, or active Codex/Claude/Cursor app activity on macOS. App activity detection only reads process metadata like command name and CPU usage; it does not read prompts, transcripts, source code, or app databases. Wrapping with `machiai run --overlay -- ...` remains the strictest unlock path.
+The overlay is an always-on-top macOS window with drag/drop and click-to-move chess. By default it connects to the public Machiai matchmaking server.
 
-On macOS, `machiai run --overlay -- codex ...` automatically falls back to the Codex app-bundled CLI if plain `codex` is not in your shell `PATH`.
+### Detection
 
-Local wait sessions heartbeat while the wrapped command is running. If a terminal is killed or a stale session is left behind, Machiai expires it and locks Start again.
+Machiai unlocks a rated game only while a coding agent is actively working. It figures that out in layers, strongest first:
+
+1. **Exact hooks (opt-in, one click).** Click the status pill and choose **Enable exact detection** (or run `machiai link`). This adds a lightweight hook to Claude Code and Codex that reports session start, prompt, and stop events. Most accurate.
+2. **Live session transcripts (zero-config default).** Machiai watches the session files Claude Code and Codex already write (`~/.claude/projects`, `~/.codex/sessions`) and derives running/idle from turn boundaries. It reads only structural metadata — timestamps, working directory, and turn markers — never your prompts, responses, or source code.
+3. **Process activity (fallback).** Coarse detection of a running agent app when no transcript or hook signal is available.
+
+Click the status pill to open the **Detection** panel and choose what unlocks chess from a dropdown — Auto (any agent), only Claude, only Codex, only terminal sessions, only app sessions, or one specific session — alongside a live list of your sessions with running/idle status. Wrapping a command with `machiai run --overlay -- ...` also creates an explicit wait session.
+
+### Match history
+
+Finished games are saved locally and shown in the **Games** panel: win/loss/draw, opponent, MMR change, and your recent record.
+
+On macOS, `machiai run --overlay -- codex ...` automatically falls back to the Codex app-bundled CLI if plain `codex` is not in your shell `PATH`. Local wait sessions heartbeat while the wrapped command runs; a killed terminal or stale session expires and locks Start again.
 
 Rated queue requires X login. The package never asks users for API keys.
 

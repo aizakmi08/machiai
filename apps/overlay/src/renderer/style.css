@@ -25,6 +25,7 @@ button {
 
 .shell {
   -webkit-app-region: drag;
+  position: relative;
   --board-size: clamp(220px, min(calc(100vw - 142px), calc(100vh - 238px)), 520px);
   --rail-size: clamp(56px, 13vw, 100px);
   height: 100%;
@@ -134,6 +135,364 @@ footer {
 .pill.inactive,
 .pill.offline {
   color: #8c8c8c;
+}
+
+.statusChip {
+  -webkit-app-region: no-drag;
+  height: 23px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 9px;
+  border: 1px solid #2f2f2f;
+  border-radius: 999px;
+  color: #eaeaea;
+  background: #050505;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease;
+}
+
+.statusChip:hover,
+.statusChip.open {
+  border-color: #6a6a6a;
+  background: #0e0e0e;
+}
+
+.statusChip .chipText {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.statusChip .caret {
+  font-size: 8px;
+  opacity: 0.65;
+  transition: transform 120ms ease;
+}
+
+.statusChip.open .caret {
+  transform: rotate(180deg);
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: #6a6a6a;
+}
+
+.dot.active {
+  background: #3ddc84;
+  box-shadow: 0 0 7px rgba(61, 220, 132, 0.85);
+}
+
+.dot.maybe {
+  background: #d8b84a;
+}
+
+.dot.inactive {
+  background: #555;
+}
+
+.detectionPanel {
+  -webkit-app-region: no-drag;
+  position: absolute;
+  z-index: 50;
+  top: 62px;
+  left: 16px;
+  right: 16px;
+  max-height: min(400px, calc(100vh - 92px));
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 11px 12px 12px;
+  border: 1px solid #333;
+  border-radius: 11px;
+  background: #0a0a0a;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.7);
+}
+
+.detectionHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.detectionHead strong {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: #cfcfcf;
+}
+
+.panelClose {
+  -webkit-app-region: no-drag;
+  width: 22px;
+  height: 22px;
+  border: 1px solid #333;
+  border-radius: 999px;
+  color: #bbb;
+  background: #000;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.detectExplain {
+  margin: 0;
+  color: #9a9a9a;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.detectSelect {
+  -webkit-app-region: no-drag;
+  width: 100%;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid #444;
+  border-radius: 8px;
+  color: #fff;
+  background: #050505;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.sessionList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 168px;
+  overflow-y: auto;
+}
+
+.sessionEmpty {
+  margin: 2px 0;
+  color: #7a7a7a;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.sessionRow {
+  -webkit-app-region: no-drag;
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 30px;
+  padding: 0 9px;
+  border: 1px solid #262626;
+  border-radius: 8px;
+  color: #ededed;
+  background: #000;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sessionRow:hover {
+  border-color: #4a4a4a;
+}
+
+.sessionRow.active {
+  border-color: #fff;
+  background: #131313;
+}
+
+.stateDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #555;
+}
+
+.stateDot.running {
+  background: #3ddc84;
+  box-shadow: 0 0 6px rgba(61, 220, 132, 0.8);
+}
+
+.stateDot.idle {
+  background: #d8b84a;
+}
+
+.sessMain {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.sessMeta {
+  flex: 0 0 auto;
+  color: #8a8a8a;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.detectFoot {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding-top: 3px;
+  border-top: 1px solid #1e1e1e;
+}
+
+.linkBtn {
+  -webkit-app-region: no-drag;
+  height: 30px;
+  border: 1px solid #3a3a3a;
+  border-radius: 8px;
+  color: #fff;
+  background: #000;
+  font-size: 12px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.linkBtn:hover:not(:disabled) {
+  border-color: #fff;
+}
+
+.linkBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.detectHint {
+  color: #6f6f6f;
+  font-size: 10px;
+  line-height: 1.3;
+}
+
+.panelNote {
+  margin: 0;
+  padding: 7px 9px;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  background: #101010;
+  color: #d6d6d6;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.linkDone {
+  display: inline-flex;
+  align-items: center;
+  height: 30px;
+  color: #3ddc84;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.histBtn {
+  -webkit-app-region: no-drag;
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid #2f2f2f;
+  border-radius: 999px;
+  color: #eaeaea;
+  background: #000;
+  font-size: 11px;
+  font-weight: 750;
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease;
+}
+
+.histBtn:hover,
+.histBtn.open {
+  border-color: #6a6a6a;
+  background: #0e0e0e;
+}
+
+.matchSummary {
+  margin: 0;
+  color: #cfcfcf;
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.02em;
+}
+
+.matchList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.matchRow {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid #222;
+  border-radius: 8px;
+  background: #000;
+  font-size: 12px;
+}
+
+.resultTag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  font-size: 10px;
+  font-weight: 800;
+  color: #000;
+}
+
+.resultTag.win {
+  background: #3ddc84;
+}
+
+.resultTag.loss {
+  background: #e5e5e5;
+}
+
+.resultTag.draw {
+  background: #8a8a8a;
+}
+
+.matchOpp {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 650;
+}
+
+.matchDelta {
+  flex: 0 0 auto;
+  color: #9a9a9a;
+  font-size: 11px;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+}
+
+.matchAge {
+  flex: 0 0 auto;
+  color: #6f6f6f;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
 }
 
 .playerRow {

@@ -1,8 +1,15 @@
 import { execFile } from "node:child_process";
 import { basename } from "node:path";
 import { promisify } from "node:util";
-import type { AgentDetection, WaitSession } from "../../shared/src/index.js";
+import {
+  DEFAULT_REFERENCE_SELECTOR,
+  type AgentDetection,
+  type AgentSessionSummary,
+  type ReferenceSelector,
+  type WaitSession,
+} from "../../shared/src/index.js";
 import { isFreshWaitSession, loadState, type LocalState } from "./local.js";
+import { resolveReference, scanRegistry } from "./session-registry.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -21,6 +28,10 @@ export interface AgentDetectionOptions {
   processNames?: string[];
   processes?: ProcessSnapshot[];
   trustVisibleAgentApps?: boolean;
+  /** Injected session registry (tests). When omitted at runtime it is scanned from disk. */
+  registry?: AgentSessionSummary[];
+  /** Which session(s) gate a new game. Falls back to saved state, then auto. */
+  reference?: ReferenceSelector;
 }
 
 export interface ProcessSnapshot {
@@ -32,9 +43,27 @@ export interface ProcessSnapshot {
 export async function detectAgentActivity(options: AgentDetectionOptions = {}): Promise<AgentDetection> {
   const now = options.now ?? new Date();
   const state = options.state ?? loadState();
+
+  // Tests inject processes/processNames and never scan disk; runtime scans both registry + processes.
+  const injectedProcesses = options.processes !== undefined || options.processNames !== undefined;
+  const registry = options.registry ?? (injectedProcesses ? [] : scanRegistry(now, state.waitSessions));
+  const requested = options.reference ?? state.referenceSelector ?? DEFAULT_REFERENCE_SELECTOR;
+  // Self-heal: a pin on a session that no longer exists falls back to Auto, so a game never
+  // stays locked because the user is "watching" an agent session that already ended.
+  const selector: ReferenceSelector =
+    requested.kind === "session" && !registry.some((session) => session.id === requested.sessionId)
+      ? DEFAULT_REFERENCE_SELECTOR
+      : requested;
+  const decorate = (detection: AgentDetection): AgentDetection => ({
+    ...detection,
+    sessions: registry,
+    reference: selector,
+    referenceSessionId: detection.referenceSessionId ?? detection.sessionId,
+  });
+
   const localSession = latestActiveSession(state.waitSessions, now);
   if (localSession) {
-    return {
+    return decorate({
       status: "active",
       source: "local-session",
       agent: localSession.agent,
@@ -43,70 +72,119 @@ export async function detectAgentActivity(options: AgentDetectionOptions = {}): 
       goal: localSession.goal,
       reason: `${localSession.agent} is running through Machiai.`,
       detectedAt: now.toISOString(),
-    };
+    });
+  }
+
+  // Primary signal: the session the user is watching (hooks + live transcripts).
+  const reference = resolveReference(registry, selector);
+  if (reference.matched) {
+    const session = reference.matched;
+    return decorate({
+      status: "active",
+      source: "session",
+      agent: session.agent,
+      sessionId: session.id,
+      workspace: session.workspace,
+      goal: session.title,
+      reason: `${session.agent} is running${describeSession(session)}.`,
+      detectedAt: now.toISOString(),
+      referenceSessionId: session.id,
+    });
   }
 
   const processes = options.processes ?? snapshotsFromProcessNames(options.processNames) ?? (await readProcessSnapshots());
   const activeCli = processes.map(classifyCliProcess).find((item): item is CliProcessMatch => Boolean(item?.active));
   if (activeCli) {
-    return {
+    return decorate({
       status: "active",
       source: "process",
       agent: activeCli.agent,
       reason: `${activeCli.agent} is running an agent command.`,
       detectedAt: now.toISOString(),
-    };
+    });
   }
 
+  // Genuine app CPU work unlocks — but only when the transcript does not already track that agent.
+  // A running tracked agent was handled above, so a tracked agent reaching here is idle: its transcript
+  // is the authoritative signal and must not be overridden by app CPU noise (idle Electron apps).
   const activeApp = classifyActiveAppActivity(processes);
-  if (activeApp) {
+  if (activeApp && !registryHasAgent(registry, activeApp.agent)) {
     rememberAppActivity(activeApp.agent, now);
-    return {
+    return decorate({
       status: "active",
       source: "app-activity",
       agent: activeApp.agent,
       reason: `${activeApp.agent} is actively working on this Mac.`,
       detectedAt: now.toISOString(),
-    };
+    });
   }
 
   const recentApp = recentAppActivityDetection(processes, now);
-  if (recentApp) return recentApp;
+  if (recentApp && !registryHasAgent(registry, recentApp.agent)) return decorate(recentApp);
+
+  // A watched session exists but its turn is finished: report idle so a new rated game stays locked.
+  if (reference.idleMatch) {
+    const session = reference.idleMatch;
+    return decorate({
+      status: "maybe",
+      source: "session",
+      agent: session.agent,
+      sessionId: session.id,
+      workspace: session.workspace,
+      goal: session.title,
+      reason: `${session.agent} finished its turn${describeSession(session)}. Send it a prompt to unlock a new game.`,
+      detectedAt: now.toISOString(),
+      referenceSessionId: session.id,
+    });
+  }
 
   const maybeCli = processes.map(classifyCliProcess).find((item): item is CliProcessMatch => Boolean(item));
   if (maybeCli) {
     if (options.trustVisibleAgentApps) {
-      return activeFromTrustedProcess(maybeCli.agent, now);
+      return decorate(activeFromTrustedProcess(maybeCli.agent, now));
     }
-    return {
+    return decorate({
       status: "maybe",
       source: "process",
       agent: maybeCli.agent,
       reason: `${maybeCli.agent} is open, but Machiai cannot prove it is currently running a task.`,
       detectedAt: now.toISOString(),
-    };
+    });
   }
 
   const guiApp = processes.find((process) => GUI_APP_PROCESS_NAMES.some((pattern) => pattern.test(process.name)))?.name;
   if (guiApp) {
     if (options.trustVisibleAgentApps) {
-      return activeFromTrustedProcess(guiApp, now, "app");
+      return decorate(activeFromTrustedProcess(guiApp, now, "app"));
     }
-    return {
+    return decorate({
       status: "maybe",
       source: "app",
       agent: guiApp,
       reason: `${guiApp} is open, but Machiai cannot prove an agent is currently running.`,
       detectedAt: now.toISOString(),
-    };
+    });
   }
 
-  return {
+  return decorate({
     status: "inactive",
     source: "none",
     reason: "No active Machiai wait session or supported agent process was detected.",
     detectedAt: now.toISOString(),
-  };
+  });
+}
+
+function describeSession(session: AgentSessionSummary): string {
+  const label = session.title || session.workspace;
+  return label ? ` (${label})` : "";
+}
+
+/** Does the transcript registry already track this app's agent? App names ("Codex") map to ids ("codex"). */
+function registryHasAgent(registry: AgentSessionSummary[], appAgent: string | undefined): boolean {
+  if (!appAgent) return false;
+  const name = appAgent.toLowerCase();
+  const base = name.includes("codex") ? "codex" : name.includes("claude") ? "claude" : name.includes("cursor") ? "cursor" : name;
+  return registry.some((session) => session.agent === base);
 }
 
 export function resetAgentDetectionMemoryForTests(): void {
