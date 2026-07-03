@@ -24,8 +24,9 @@ Deploy:
 1. Open [Render Blueprints](https://dashboard.render.com/blueprints).
 2. Click **New Blueprint Instance**.
 3. Connect `https://github.com/aizakmi08/machiai`.
-4. Select the `machiai-aizakmi08` web service from `render.yaml`.
-5. Create/apply the Blueprint.
+4. Select the `machiai-aizakmi08` web service and `machiai-db` database from `render.yaml`.
+5. Add `X_CLIENT_ID` and `X_CLIENT_SECRET` in the service environment.
+6. Create/apply the Blueprint.
 
 After the deploy completes:
 
@@ -48,7 +49,7 @@ Render Free tradeoffs:
 
 - The service can sleep after idle time.
 - First request after sleep can be slow.
-- The free filesystem is ephemeral, so ratings can reset after restarts.
+- The service filesystem is ephemeral. Public X login and ratings should use `DATABASE_URL` from the `machiai-db` database in `render.yaml`.
 - WebSockets are supported and work for MVP multiplayer testing.
 
 ## Runtime Guardrails
@@ -76,7 +77,9 @@ The server has built-in per-socket rate limits for auth, profile updates, wait h
 
 ## Scaled Server Environment
 
-For friend testing, no extra infrastructure is required. The server defaults to local SQLite.
+For local friend testing, no extra infrastructure is required. The server defaults to local SQLite.
+
+For the public hosted server, configure `DATABASE_URL`. This persists players, X auth tokens, pending X login sessions, ratings, games, and leaderboard data across Render restarts. Without it, sign-in can appear to work once and then fail after a deploy or cold restart because the server forgets the token while the desktop client still has it locally.
 
 For real production traffic, configure shared persistence and shared Socket.IO pub/sub:
 

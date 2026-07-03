@@ -78,6 +78,7 @@ export function App() {
   const [reaction, setReaction] = useState<ReactionMessage | undefined>();
   const [matchFound, setMatchFound] = useState(false);
   const [signingIn, setSigningIn] = useState(false);
+  const [xLoginUrl, setXLoginUrl] = useState<string | undefined>();
   const [showDetection, setShowDetection] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [matches, setMatches] = useState<MatchRecord[]>([]);
@@ -323,7 +324,7 @@ export function App() {
       ? "Connecting…"
       : !signedIn
         ? signingIn
-          ? "Signing in…"
+          ? "Open X login again"
           : "Sign in with X to play"
         : detection?.status === "active"
           ? "Start game"
@@ -429,6 +430,7 @@ export function App() {
     if (!bootstrap || !profile || signingIn || connection !== "online") return;
     try {
       setSigningIn(true);
+      setXLoginUrl(undefined);
       setMessage("Opening X login.");
       const startResponse = await fetch(new URL("/auth/x/start", bootstrap.serverUrl), {
         method: "POST",
@@ -439,9 +441,11 @@ export function App() {
       if (!startResponse.ok || !start.ok || !start.authUrl || !start.sessionId) {
         throw new Error(start.message ?? start.error ?? "X login is not available.");
       }
+      setXLoginUrl(start.authUrl);
       await window.machiaiOverlay.openExternal(start.authUrl);
-      setMessage("Finish X login in your browser.");
+      setMessage("Finish X login in your browser. If Chrome did not switch tabs, click Open X login again.");
       const nextProfile = await pollXLogin(bootstrap.serverUrl, start.sessionId);
+      setXLoginUrl(undefined);
       const saved = await saveServerProfile(nextProfile);
       const socket = socketRef.current;
       if (socket?.connected) {
@@ -452,8 +456,19 @@ export function App() {
       setMessage(`Signed in as ${twitterDisplayName(saved.twitterHandle) ?? saved.displayName ?? saved.handle}.`);
     } catch (error) {
       setMessage(errorMessage(error));
+      setXLoginUrl(undefined);
     } finally {
       setSigningIn(false);
+    }
+  }
+
+  async function reopenXLogin() {
+    if (!xLoginUrl) return;
+    try {
+      await window.machiaiOverlay.openExternal(xLoginUrl);
+      setMessage("X login tab opened. Finish login in your browser.");
+    } catch (error) {
+      setMessage(errorMessage(error));
     }
   }
 
@@ -848,7 +863,11 @@ export function App() {
                   Leave Queue
                 </button>
               ) : (
-                <button className="primary" disabled={signedIn ? !canQueue : connection !== "online" || signingIn} onClick={() => void (signedIn ? joinQueue() : signInWithX())}>
+                <button
+                  className="primary"
+                  disabled={signedIn ? !canQueue : connection !== "online" || (signingIn && !xLoginUrl)}
+                  onClick={() => void (signedIn ? joinQueue() : signingIn && xLoginUrl ? reopenXLogin() : signInWithX())}
+                >
                   {startLabel}
                 </button>
               )}

@@ -294,6 +294,67 @@ test("default store persists players across reopen", async () => {
   await reopened.close();
 });
 
+test("store persists pending X auth sessions across reopen", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "machiai-store-"));
+  const storePath = join(dir, "server-store.sqlite");
+  const store = await createStore(storePath);
+  await store.upsertXAuthSession({
+    sessionId: "auth_store",
+    state: "state_store",
+    codeVerifier: "verifier_store",
+    playerId: "player_store",
+    deviceKey: "device_store",
+    createdAtMs: Date.now(),
+    redirectUri: "https://example.com/auth/x/callback",
+    status: "pending",
+  });
+  await store.close();
+
+  const reopened = await createStore(storePath);
+  const saved = await reopened.getXAuthSessionByState("state_store");
+  assert.equal(saved?.sessionId, "auth_store");
+  assert.equal(saved?.codeVerifier, "verifier_store");
+  assert.equal(await reopened.countPendingXAuthSessions(), 1);
+  await reopened.close();
+});
+
+test("X auth start can be polled after server restart", async () => {
+  const previousClientId = process.env.X_CLIENT_ID;
+  process.env.X_CLIENT_ID = "test_x_client";
+  const dir = mkdtempSync(join(tmpdir(), "machiai-xauth-"));
+  const storePath = join(dir, "server-store.sqlite");
+  let first: MachiaiServer | undefined;
+  let second: MachiaiServer | undefined;
+  try {
+    first = new MachiaiServer({ storePath });
+    const firstUrl = await first.start(0);
+    const startResponse = await fetch(new URL("/auth/x/start", firstUrl), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ playerId: "player_restart", deviceKey: "device_restart" }),
+    });
+    const start = (await startResponse.json()) as { ok: boolean; sessionId: string; authUrl: string };
+    assert.equal(start.ok, true);
+    assert.ok(start.authUrl.includes("https://x.com/i/oauth2/authorize"));
+    await first.stop();
+    first = undefined;
+
+    second = new MachiaiServer({ storePath });
+    const secondUrl = await second.start(0);
+    const pollResponse = await fetch(new URL(`/auth/x/session/${start.sessionId}`, secondUrl));
+    const poll = (await pollResponse.json()) as { ok: boolean; status: string };
+    assert.equal(poll.ok, true);
+    assert.equal(poll.status, "pending");
+    const stats = (await (await fetch(new URL("/stats", secondUrl))).json()) as { pendingAuthSessions: number };
+    assert.equal(stats.pendingAuthSessions, 1);
+  } finally {
+    await first?.stop();
+    await second?.stop();
+    if (previousClientId === undefined) delete process.env.X_CLIENT_ID;
+    else process.env.X_CLIENT_ID = previousClientId;
+  }
+});
+
 test("store rating finalization claims are idempotent", async () => {
   const store = new JsonFileStore();
   await store.init();

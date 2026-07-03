@@ -19,6 +19,11 @@ export interface MachiaiStore {
   getGame(gameId: string): Promise<GameState | undefined>;
   listActiveGamesForPlayer(playerId: string): Promise<GameState[]>;
   tryClaimRatingFinalization(gameId: string, createdAt: string): Promise<boolean>;
+  upsertXAuthSession(session: StoredXAuthSession): Promise<StoredXAuthSession>;
+  getXAuthSession(sessionId: string): Promise<StoredXAuthSession | undefined>;
+  getXAuthSessionByState(state: string): Promise<StoredXAuthSession | undefined>;
+  countPendingXAuthSessions(): Promise<number>;
+  deleteExpiredXAuthSessions(beforeMs: number): Promise<void>;
   recordRatingEvent(input: {
     gameId: string;
     playerId: string;
@@ -30,10 +35,24 @@ export interface MachiaiStore {
   close(): Promise<void>;
 }
 
+export interface StoredXAuthSession {
+  sessionId: string;
+  state: string;
+  codeVerifier: string;
+  playerId: string;
+  deviceKey?: string;
+  createdAtMs: number;
+  redirectUri: string;
+  status: "pending" | "complete" | "error";
+  player?: PlayerProfile;
+  error?: string;
+}
+
 interface Snapshot {
   players: PlayerProfile[];
   waitSessions: WaitSession[];
   games: GameState[];
+  xAuthSessions?: StoredXAuthSession[];
   ratingEvents: Array<{
     gameId: string;
     playerId: string;
@@ -49,6 +68,7 @@ export class JsonFileStore implements MachiaiStore {
   private players = new Map<string, PlayerProfile>();
   private waitSessions = new Map<string, WaitSession>();
   private games = new Map<string, GameState>();
+  private xAuthSessions = new Map<string, StoredXAuthSession>();
   private ratingEvents: Snapshot["ratingEvents"] = [];
   private ratingFinalizations = new Map<string, string>();
 
@@ -61,6 +81,7 @@ export class JsonFileStore implements MachiaiStore {
       this.players = new Map((snapshot.players ?? []).map((p) => [p.playerId, p]));
       this.waitSessions = new Map((snapshot.waitSessions ?? []).map((s) => [s.sessionId, s]));
       this.games = new Map((snapshot.games ?? []).map((g) => [g.gameId, g]));
+      this.xAuthSessions = new Map((snapshot.xAuthSessions ?? []).map((s) => [s.sessionId, s]));
       this.ratingEvents = snapshot.ratingEvents ?? [];
       this.ratingFinalizations = new Map((snapshot.ratingFinalizations ?? []).map((item) => [item.gameId, item.createdAt]));
     } catch {
@@ -152,6 +173,31 @@ export class JsonFileStore implements MachiaiStore {
     return true;
   }
 
+  async upsertXAuthSession(session: StoredXAuthSession): Promise<StoredXAuthSession> {
+    this.xAuthSessions.set(session.sessionId, session);
+    this.flush();
+    return session;
+  }
+
+  async getXAuthSession(sessionId: string): Promise<StoredXAuthSession | undefined> {
+    return this.xAuthSessions.get(sessionId);
+  }
+
+  async getXAuthSessionByState(state: string): Promise<StoredXAuthSession | undefined> {
+    return [...this.xAuthSessions.values()].find((session) => session.state === state);
+  }
+
+  async countPendingXAuthSessions(): Promise<number> {
+    return [...this.xAuthSessions.values()].filter((session) => session.status === "pending").length;
+  }
+
+  async deleteExpiredXAuthSessions(beforeMs: number): Promise<void> {
+    for (const [sessionId, session] of this.xAuthSessions) {
+      if (session.createdAtMs < beforeMs) this.xAuthSessions.delete(sessionId);
+    }
+    this.flush();
+  }
+
   async close(): Promise<void> {
     this.flush();
   }
@@ -163,6 +209,7 @@ export class JsonFileStore implements MachiaiStore {
       players: [...this.players.values()],
       waitSessions: [...this.waitSessions.values()],
       games: [...this.games.values()],
+      xAuthSessions: [...this.xAuthSessions.values()],
       ratingEvents: this.ratingEvents,
       ratingFinalizations: [...this.ratingFinalizations].map(([gameId, createdAt]) => ({ gameId, createdAt })),
     };
@@ -251,6 +298,18 @@ export class SqliteStore implements MachiaiStore {
       CREATE TABLE IF NOT EXISTS rating_finalizations (
         game_id TEXT PRIMARY KEY,
         created_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS x_auth_sessions (
+        session_id TEXT PRIMARY KEY,
+        state TEXT NOT NULL UNIQUE,
+        code_verifier TEXT NOT NULL,
+        player_id TEXT NOT NULL,
+        device_key TEXT,
+        created_at_ms INTEGER NOT NULL,
+        redirect_uri TEXT NOT NULL,
+        status TEXT NOT NULL,
+        player_json TEXT,
+        error TEXT
       );
     `);
     this.tryAddColumn("players", "twitter_handle", "TEXT");
@@ -428,6 +487,56 @@ export class SqliteStore implements MachiaiStore {
     return result.changes !== 0;
   }
 
+  async upsertXAuthSession(session: StoredXAuthSession): Promise<StoredXAuthSession> {
+    this.requiredDb()
+      .prepare(
+        `INSERT INTO x_auth_sessions (session_id, state, code_verifier, player_id, device_key, created_at_ms, redirect_uri, status, player_json, error)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(session_id) DO UPDATE SET
+          state=excluded.state,
+          code_verifier=excluded.code_verifier,
+          player_id=excluded.player_id,
+          device_key=excluded.device_key,
+          created_at_ms=excluded.created_at_ms,
+          redirect_uri=excluded.redirect_uri,
+          status=excluded.status,
+          player_json=excluded.player_json,
+          error=excluded.error`,
+      )
+      .run(
+        session.sessionId,
+        session.state,
+        session.codeVerifier,
+        session.playerId,
+        session.deviceKey ?? null,
+        session.createdAtMs,
+        session.redirectUri,
+        session.status,
+        session.player ? JSON.stringify(session.player) : null,
+        session.error ?? null,
+      );
+    return session;
+  }
+
+  async getXAuthSession(sessionId: string): Promise<StoredXAuthSession | undefined> {
+    const row = this.requiredDb().prepare("SELECT * FROM x_auth_sessions WHERE session_id = ?").get(sessionId);
+    return row ? rowToXAuthSession(row) : undefined;
+  }
+
+  async getXAuthSessionByState(state: string): Promise<StoredXAuthSession | undefined> {
+    const row = this.requiredDb().prepare("SELECT * FROM x_auth_sessions WHERE state = ?").get(state);
+    return row ? rowToXAuthSession(row) : undefined;
+  }
+
+  async countPendingXAuthSessions(): Promise<number> {
+    const row = this.requiredDb().prepare("SELECT COUNT(*) AS count FROM x_auth_sessions WHERE status = 'pending'").get();
+    return Number(row?.count ?? 0);
+  }
+
+  async deleteExpiredXAuthSessions(beforeMs: number): Promise<void> {
+    this.requiredDb().prepare("DELETE FROM x_auth_sessions WHERE created_at_ms < ?").run(beforeMs);
+  }
+
   async close(): Promise<void> {
     this.db?.close();
   }
@@ -530,6 +639,19 @@ export class PostgresStore implements MachiaiStore {
         game_id TEXT PRIMARY KEY,
         created_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS x_auth_sessions (
+        session_id TEXT PRIMARY KEY,
+        state TEXT NOT NULL UNIQUE,
+        code_verifier TEXT NOT NULL,
+        player_id TEXT NOT NULL,
+        device_key TEXT,
+        created_at_ms BIGINT NOT NULL,
+        redirect_uri TEXT NOT NULL,
+        status TEXT NOT NULL,
+        player_json JSONB,
+        error TEXT
+      );
+      CREATE INDEX IF NOT EXISTS x_auth_sessions_created_idx ON x_auth_sessions (created_at_ms);
       CREATE INDEX IF NOT EXISTS rating_events_game_idx ON rating_events (game_id);
     `);
   }
@@ -720,6 +842,55 @@ export class PostgresStore implements MachiaiStore {
     return result.rowCount === 1;
   }
 
+  async upsertXAuthSession(session: StoredXAuthSession): Promise<StoredXAuthSession> {
+    await this.requiredPool().query(
+      `INSERT INTO x_auth_sessions (session_id, state, code_verifier, player_id, device_key, created_at_ms, redirect_uri, status, player_json, error)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10)
+       ON CONFLICT(session_id) DO UPDATE SET
+        state=excluded.state,
+        code_verifier=excluded.code_verifier,
+        player_id=excluded.player_id,
+        device_key=excluded.device_key,
+        created_at_ms=excluded.created_at_ms,
+        redirect_uri=excluded.redirect_uri,
+        status=excluded.status,
+        player_json=excluded.player_json,
+        error=excluded.error`,
+      [
+        session.sessionId,
+        session.state,
+        session.codeVerifier,
+        session.playerId,
+        session.deviceKey ?? null,
+        session.createdAtMs,
+        session.redirectUri,
+        session.status,
+        session.player ? JSON.stringify(session.player) : null,
+        session.error ?? null,
+      ],
+    );
+    return session;
+  }
+
+  async getXAuthSession(sessionId: string): Promise<StoredXAuthSession | undefined> {
+    const result = await this.requiredPool().query<PgRow>("SELECT * FROM x_auth_sessions WHERE session_id = $1", [sessionId]);
+    return result.rows[0] ? rowToXAuthSession(result.rows[0]) : undefined;
+  }
+
+  async getXAuthSessionByState(state: string): Promise<StoredXAuthSession | undefined> {
+    const result = await this.requiredPool().query<PgRow>("SELECT * FROM x_auth_sessions WHERE state = $1", [state]);
+    return result.rows[0] ? rowToXAuthSession(result.rows[0]) : undefined;
+  }
+
+  async countPendingXAuthSessions(): Promise<number> {
+    const result = await this.requiredPool().query<{ count: string }>("SELECT COUNT(*) AS count FROM x_auth_sessions WHERE status = 'pending'");
+    return Number(result.rows[0]?.count ?? 0);
+  }
+
+  async deleteExpiredXAuthSessions(beforeMs: number): Promise<void> {
+    await this.requiredPool().query("DELETE FROM x_auth_sessions WHERE created_at_ms < $1", [beforeMs]);
+  }
+
   async close(): Promise<void> {
     await this.pool?.end();
   }
@@ -782,5 +953,22 @@ function rowToWaitSession(row: Record<string, unknown>): WaitSession {
     startedAt: String(row.started_at),
     endedAt: row.ended_at ? String(row.ended_at) : undefined,
     lastHeartbeatAt: String(row.last_heartbeat_at),
+  };
+}
+
+function rowToXAuthSession(row: Record<string, unknown>): StoredXAuthSession {
+  const playerJson = row.player_json;
+  const player = typeof playerJson === "string" ? (JSON.parse(playerJson) as PlayerProfile) : playerJson ? (playerJson as PlayerProfile) : undefined;
+  return {
+    sessionId: String(row.session_id),
+    state: String(row.state),
+    codeVerifier: String(row.code_verifier),
+    playerId: String(row.player_id),
+    deviceKey: row.device_key ? String(row.device_key) : undefined,
+    createdAtMs: Number(row.created_at_ms),
+    redirectUri: String(row.redirect_uri),
+    status: String(row.status) as StoredXAuthSession["status"],
+    player,
+    error: row.error ? String(row.error) : undefined,
   };
 }

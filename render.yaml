@@ -15,9 +15,18 @@ services:
         value: 0.0.0.0
       - key: MACHIAI_STORE
         value: /tmp/machiai-server.sqlite
+      - key: DATABASE_URL
+        fromDatabase:
+          name: machiai-db
+          property: connectionString
       - key: MACHIAI_PUBLIC_URL
         value: https://machiai-aizakmi08.onrender.com
       - key: X_CLIENT_ID
         sync: false
       - key: X_CLIENT_SECRET
         sync: false
+databases:
+  - name: machiai-db
+    databaseName: machiai
+    user: machiai
+    plan: free

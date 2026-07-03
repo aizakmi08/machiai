@@ -126,7 +126,7 @@ function registerIpc(): void {
   ipcMain.handle("machiai:save-profile", (_event, profile: PlayerProfile) => saveProfile(profile));
   ipcMain.handle("machiai:sign-out", () => clearAuth());
   ipcMain.handle("machiai:open-external", async (_event, url: string): Promise<void> => {
-    await shell.openExternal(url);
+    await shell.openExternal(url, { activate: true });
   });
   ipcMain.handle("machiai:snap", async (): Promise<SnapResult> => snapWindow());
 }

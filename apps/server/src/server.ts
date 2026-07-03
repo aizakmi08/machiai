@@ -37,19 +37,6 @@ export interface MachiaiServerOptions {
   reconnectGraceMs?: number;
 }
 
-interface XAuthSession {
-  sessionId: string;
-  state: string;
-  codeVerifier: string;
-  playerId: string;
-  deviceKey?: string;
-  createdAtMs: number;
-  redirectUri: string;
-  status: "pending" | "complete" | "error";
-  player?: PlayerProfile;
-  error?: string;
-}
-
 interface RateLimitRule {
   limit: number;
   windowMs: number;
@@ -84,7 +71,6 @@ export class MachiaiServer {
   private readonly botTimers = new Map<string, NodeJS.Timeout>();
   private readonly botMoveTimers = new Map<string, NodeJS.Timeout>();
   private readonly gameTimeoutTimers = new Map<string, NodeJS.Timeout>();
-  private readonly xAuthSessions = new Map<string, XAuthSession>();
   private readonly rateBuckets = new Map<string, RateBucket>();
   private redisClients?: { pub: RedisClientType; sub: RedisClientType };
   private readonly botFallbackMs: number;
@@ -562,7 +548,7 @@ export class MachiaiServer {
       return this.json(res, { ok: true, service: "machiai", now: new Date().toISOString() });
     }
     if (url.startsWith("/stats")) {
-      return this.json(res, this.currentStats());
+      return this.json(res, await this.currentStats());
     }
     if (url.startsWith("/leaderboard")) {
       const entries = await this.requiredStore().listLeaderboard(25);
@@ -608,7 +594,7 @@ export class MachiaiServer {
     const state = randomBase64Url(24);
     const codeVerifier = randomBase64Url(48);
     const codeChallenge = base64Url(createHash("sha256").update(codeVerifier).digest());
-    this.xAuthSessions.set(sessionId, {
+    await this.requiredStore().upsertXAuthSession({
       sessionId,
       state,
       codeVerifier,
@@ -629,10 +615,10 @@ export class MachiaiServer {
     return this.json(res, { ok: true, sessionId, authUrl: authUrl.toString() });
   }
 
-  private pollXAuthSession(req: IncomingMessage, sessionId: string, res: ServerResponse): void {
+  private async pollXAuthSession(req: IncomingMessage, sessionId: string, res: ServerResponse): Promise<void> {
     this.pruneRuntimeState();
     if (this.rejectHttpRateLimit(req, res, "auth/x/session", RATE_LIMITS.xAuthPoll)) return;
-    const session = this.xAuthSessions.get(sessionId);
+    const session = await this.requiredStore().getXAuthSession(sessionId);
     if (!session) {
       res.statusCode = 404;
       return this.json(res, { ok: false, status: "missing", error: "Unknown auth session." });
@@ -640,6 +626,7 @@ export class MachiaiServer {
     if (Date.now() - session.createdAtMs > 10 * 60 * 1000 && session.status === "pending") {
       session.status = "error";
       session.error = "X login expired. Try again.";
+      await this.requiredStore().upsertXAuthSession(session);
     }
     return this.json(res, {
       ok: session.status !== "error",
@@ -655,7 +642,7 @@ export class MachiaiServer {
     const state = callbackUrl.searchParams.get("state") ?? "";
     const code = callbackUrl.searchParams.get("code") ?? "";
     const error = callbackUrl.searchParams.get("error");
-    const session = [...this.xAuthSessions.values()].find((item) => item.state === state);
+    const session = await this.requiredStore().getXAuthSessionByState(state);
     if (!session) {
       res.statusCode = 400;
       return this.html(res, "Machiai", "Unknown or expired login session. Close this tab and try again.");
@@ -663,6 +650,7 @@ export class MachiaiServer {
     if (error || !code || !config) {
       session.status = "error";
       session.error = error ?? "X login failed.";
+      await this.requiredStore().upsertXAuthSession(session);
       res.statusCode = 400;
       return this.html(res, "Machiai", session.error);
     }
@@ -693,11 +681,14 @@ export class MachiaiServer {
       await this.requiredStore().upsertPlayer(player);
       session.status = "complete";
       session.player = player;
+      session.error = undefined;
+      await this.requiredStore().upsertXAuthSession(session);
       this.io.to(`player:${player.playerId}`).emit("auth.ready", player);
       return this.html(res, "Machiai", `Signed in as @${twitterHandle}. You can return to Machiai.`);
     } catch (caught) {
       session.status = "error";
       session.error = caught instanceof Error ? caught.message : String(caught);
+      await this.requiredStore().upsertXAuthSession(session);
       res.statusCode = 500;
       return this.html(res, "Machiai", "X login failed. Close this tab and try again.");
     }
@@ -785,7 +776,7 @@ export class MachiaiServer {
     return presence;
   }
 
-  private currentStats(): Record<string, unknown> {
+  private async currentStats(): Promise<Record<string, unknown>> {
     this.pruneRuntimeState();
     return {
       ok: true,
@@ -795,7 +786,7 @@ export class MachiaiServer {
       onlinePlayers: this.socketsByPlayer.size,
       queuedPlayers: this.queue.length,
       redisAdapter: Boolean(this.redisClients),
-      pendingAuthSessions: [...this.xAuthSessions.values()].filter((session) => session.status === "pending").length,
+      pendingAuthSessions: await this.requiredStore().countPendingXAuthSessions(),
       botFallbackTimers: this.botTimers.size,
       botMoveTimers: this.botMoveTimers.size,
       gameTimeoutTimers: this.gameTimeoutTimers.size,
@@ -884,9 +875,7 @@ export class MachiaiServer {
     for (const [key, bucket] of this.rateBuckets) {
       if (bucket.resetAtMs <= now) this.rateBuckets.delete(key);
     }
-    for (const [sessionId, session] of this.xAuthSessions) {
-      if (now - session.createdAtMs > 15 * 60 * 1000) this.xAuthSessions.delete(sessionId);
-    }
+    void this.requiredStore().deleteExpiredXAuthSessions(now - 15 * 60 * 1000).catch(() => undefined);
   }
 
   private emitError(socket: Socket, error: unknown, ack?: (value: unknown) => void): void {
