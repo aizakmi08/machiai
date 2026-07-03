@@ -197,7 +197,12 @@ test("mcp-config prints npx config", () => {
 });
 
 test("app smoke validates built overlay assets", () => {
-  const output = execFileSync(process.execPath, [cli, "app", "--smoke"], { encoding: "utf8" });
+  const home = mkdtempSync(join(tmpdir(), "machiai-app-smoke-"));
+  const output = execFileSync(process.execPath, [cli, "app", "--smoke"], { encoding: "utf8", env: { ...process.env, MACHIAI_HOME: home } });
   assert.match(output, /Machiai overlay ready:/);
   assert.match(output, /Renderer:/);
+  const launcher = JSON.parse(readFileSync(join(home, "electron-launcher", "package.json"), "utf8")) as { main: string };
+  const launcherMain = readFileSync(join(home, "electron-launcher", "main.cjs"), "utf8");
+  assert.equal(launcher.main, "main.cjs");
+  assert.match(launcherMain, /MACHIAI_ELECTRON_MAIN/);
 });

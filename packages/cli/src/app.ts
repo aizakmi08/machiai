@@ -28,19 +28,21 @@ export async function startOverlayApp(args: string[], options: OverlayLaunchOpti
     throw new Error("Machiai overlay renderer is not built. Run `pnpm overlay:build`.");
   }
   validateRendererBundle(rendererPath);
+  const launcherDir = ensureElectronLauncher(mainPath);
   if (smoke) {
     console.log(`Machiai overlay ready: ${mainPath}`);
     console.log(`Renderer: ${rendererPath}`);
+    console.log(`Launcher: ${launcherDir}`);
     return;
   }
 
   const electronPath = require("electron") as string;
-  const launcherDir = ensureElectronLauncher(mainPath);
   const child = spawn(electronPath, [launcherDir], {
     stdio: waitForExit ? "inherit" : "ignore",
     detached: !waitForExit,
     env: {
       ...process.env,
+      MACHIAI_ELECTRON_MAIN: mainPath,
       ...(server ? { MACHIAI_SERVER_URL: server } : {}),
       ...(localServer ? { MACHIAI_LOCAL_SERVER: "1" } : {}),
     },
@@ -64,11 +66,27 @@ function ensureElectronLauncher(mainPath: string): string {
   const launcherDir = resolve(machiaiHome(), "electron-launcher");
   mkdirSync(launcherDir, { recursive: true });
   writeFileSync(
+    resolve(launcherDir, "main.cjs"),
+    [
+      "const { pathToFileURL } = require('node:url');",
+      "const main = process.env.MACHIAI_ELECTRON_MAIN;",
+      "if (!main) {",
+      "  console.error('MACHIAI_ELECTRON_MAIN is not set.');",
+      "  process.exit(1);",
+      "}",
+      "import(pathToFileURL(main).href).catch((error) => {",
+      "  console.error(error);",
+      "  process.exit(1);",
+      "});",
+      "",
+    ].join("\n"),
+  );
+  writeFileSync(
     resolve(launcherDir, "package.json"),
     JSON.stringify(
       {
         name: "machiai-overlay-launcher",
-        main: mainPath,
+        main: "main.cjs",
       },
       null,
       2,
