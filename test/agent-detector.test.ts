@@ -92,14 +92,16 @@ test("codex app-server and visible app processes stay maybe instead of active", 
   assert.equal(detection.agent, "Codex");
 });
 
-test("active Codex app CPU activity unlocks the overlay without reading app contents", async () => {
+test("Codex app CPU alone does NOT unlock — tracked agents ignore launch/render CPU", async () => {
+  // Opening the Codex app (no session yet) spikes CPU well past the thresholds. Because Codex is
+  // tracked via transcripts/hooks, that CPU must not fake "running" — it stays "open, unproven".
   const detection = await detectAgentActivity({
     now,
     processes: [
       {
         name: "Codex",
         commandLine: "/Applications/Codex.app/Contents/Frameworks/Codex Framework.framework/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
-        cpuPercent: 12.5,
+        cpuPercent: 45,
       },
       {
         name: "codex",
@@ -109,9 +111,8 @@ test("active Codex app CPU activity unlocks the overlay without reading app cont
     ],
     state: stateWithSession(false),
   });
-  assert.equal(detection.status, "active");
-  assert.equal(detection.source, "app-activity");
-  assert.equal(detection.agent, "Codex");
+  assert.equal(detection.status, "maybe");
+  assert.equal(detection.source, "app");
 });
 
 test("background-only Codex helper activity does not unlock the overlay", async () => {
@@ -135,19 +136,15 @@ test("background-only Codex helper activity does not unlock the overlay", async 
   assert.equal(detection.source, "app");
 });
 
-test("recent Codex app activity stays active between CPU bursts", async () => {
+test("recent Cursor app activity stays active between CPU bursts", async () => {
+  // Cursor is NOT tracked via a transcript, so its app CPU is the fallback running signal.
   const active = await detectAgentActivity({
     now,
     processes: [
       {
-        name: "Codex",
-        commandLine: "/Applications/Codex.app/Contents/Frameworks/Codex Framework.framework/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+        name: "Cursor",
+        commandLine: "/Applications/Cursor.app/Contents/Frameworks/Cursor Helper (Renderer).app/Contents/MacOS/Cursor (Renderer)",
         cpuPercent: 18,
-      },
-      {
-        name: "codex",
-        commandLine: "/Applications/Codex.app/Contents/Resources/codex app-server --analytics-default-enabled",
-        cpuPercent: 0.2,
       },
     ],
     state: stateWithSession(false),
@@ -159,13 +156,8 @@ test("recent Codex app activity stays active between CPU bursts", async () => {
     now: new Date(now.getTime() + 2000),
     processes: [
       {
-        name: "Codex",
-        commandLine: "/Applications/Codex.app/Contents/MacOS/Codex",
-        cpuPercent: 0,
-      },
-      {
-        name: "codex",
-        commandLine: "/Applications/Codex.app/Contents/Resources/codex app-server --analytics-default-enabled",
+        name: "Cursor",
+        commandLine: "/Applications/Cursor.app/Contents/MacOS/Cursor",
         cpuPercent: 0,
       },
     ],
@@ -181,8 +173,8 @@ test("recent app activity expires instead of unlocking forever", async () => {
     now,
     processes: [
       {
-        name: "Codex",
-        commandLine: "/Applications/Codex.app/Contents/Frameworks/Codex Framework.framework/Helpers/Codex (Renderer).app/Contents/MacOS/Codex (Renderer)",
+        name: "Cursor",
+        commandLine: "/Applications/Cursor.app/Contents/Frameworks/Cursor Helper (Renderer).app/Contents/MacOS/Cursor (Renderer)",
         cpuPercent: 18,
       },
     ],
@@ -193,8 +185,8 @@ test("recent app activity expires instead of unlocking forever", async () => {
     now: new Date(now.getTime() + 46_000),
     processes: [
       {
-        name: "Codex",
-        commandLine: "/Applications/Codex.app/Contents/MacOS/Codex",
+        name: "Cursor",
+        commandLine: "/Applications/Cursor.app/Contents/MacOS/Cursor",
         cpuPercent: 0,
       },
     ],

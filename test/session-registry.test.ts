@@ -21,7 +21,8 @@ test("claude state: mid-turn is running, finished turn goes idle after quiet, un
   // A finished reply flips to idle quickly (short grace only), instead of lingering as "running".
   assert.equal(claudeSessionState({ active: false, lastEventAt: nowMs - 1_000, now: nowMs }), "running");
   assert.equal(claudeSessionState({ active: false, lastEventAt: nowMs - 5_000, now: nowMs }), "idle");
-  assert.equal(claudeSessionState({ active: undefined, lastEventAt: nowMs - 5_000, now: nowMs }), "running");
+  // No decisive turn line (freshly-opened session, no prompt yet) is idle regardless of file freshness.
+  assert.equal(claudeSessionState({ active: undefined, lastEventAt: nowMs - 5_000, now: nowMs }), "idle");
   assert.equal(claudeSessionState({ active: undefined, lastEventAt: nowMs - 120_000, now: nowMs }), "idle");
   // A turn that looks in-progress but has been silent for many minutes is treated as abandoned.
   assert.equal(claudeSessionState({ active: true, lastEventAt: nowMs - 10 * 60_000, now: nowMs }), "idle");
@@ -39,7 +40,10 @@ test("codex state keys off task_started / task_complete / turn_aborted", () => {
   assert.equal(codexSessionState({ lastTurnMarker: "task_started", lastEventAt: nowMs - 60_000, now: nowMs }), "running");
   assert.equal(codexSessionState({ lastTurnMarker: "task_complete", lastEventAt: nowMs - 1_000, now: nowMs }), "idle");
   assert.equal(codexSessionState({ lastTurnMarker: "turn_aborted", lastEventAt: nowMs - 1_000, now: nowMs }), "idle");
-  assert.equal(codexSessionState({ lastTurnMarker: null, lastEventAt: nowMs - 5_000, now: nowMs }), "running");
+  // Freshly-opened session (no task marker, no work events) is idle even though the file is recent.
+  assert.equal(codexSessionState({ lastTurnMarker: null, lastEventAt: nowMs - 5_000, now: nowMs }), "idle");
+  // Long turn whose task_started scrolled out of the window, but work events prove it's still going.
+  assert.equal(codexSessionState({ lastTurnMarker: null, hasWorkEvents: true, lastEventAt: nowMs - 5_000, now: nowMs }), "running");
 });
 
 test("codex surface: desktop/vscode is app, everything else terminal", () => {

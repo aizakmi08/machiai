@@ -85,15 +85,17 @@ const CLAUDE_TURN_DONE = new Set(["end_turn", "stop_sequence", "max_tokens", "re
 /**
  * `active`: the last substantive transcript line shows a turn in progress (tool call, tool result,
  * fresh prompt, or streaming reply) = true; a finished reply (`end_turn`) = false; nothing decisive
- * in the window = undefined (fall back to recency). This is position-aware so huge tool outputs at
- * the tail don't get misread as a finished turn.
+ * in the window = undefined. This is position-aware so huge tool outputs at the tail don't get
+ * misread as a finished turn.
  */
 export function claudeSessionState(input: { active?: boolean; lastEventAt: number; now: number }): SessionState {
   const age = input.now - input.lastEventAt;
   if (input.active === true) return age <= TRANSCRIPT_RUNNING_TTL_MS ? "running" : "idle";
   // Finished reply: idle only once the session has actually gone quiet (see END_TURN_QUIET_MS).
   if (input.active === false) return age <= END_TURN_QUIET_MS ? "running" : "idle";
-  return age <= RUNNING_GRACE_MS ? "running" : "idle";
+  // No turn in the window at all (e.g. a freshly-opened session with only system/meta lines, no
+  // prompt yet). Opening a session is not running a task — do NOT let a recent file mtime fake it.
+  return "idle";
 }
 
 /** Classify one Claude transcript line as mid-turn (true), turn-finished (false), or irrelevant (undefined). */
@@ -110,14 +112,34 @@ export function classifyClaudeLine(line: Record<string, any>): boolean | undefin
 
 export function codexSessionState(input: {
   lastTurnMarker?: "task_started" | "task_complete" | "turn_aborted" | null;
+  hasWorkEvents?: boolean;
   lastEventAt: number;
   now: number;
 }): SessionState {
   const age = input.now - input.lastEventAt;
   if (input.lastTurnMarker === "task_started") return age <= TRANSCRIPT_RUNNING_TTL_MS ? "running" : "idle";
   if (input.lastTurnMarker === "task_complete" || input.lastTurnMarker === "turn_aborted") return "idle";
-  return age <= RUNNING_GRACE_MS ? "running" : "idle";
+  // No turn marker in the window. Only "running" if the tail shows actual agent work (a long turn
+  // whose task_started scrolled past the window). A freshly-opened session has only session_meta /
+  // turn_context / system lines and no work events -> idle. Opening Codex is not running a task.
+  return input.hasWorkEvents && age <= RUNNING_GRACE_MS ? "running" : "idle";
 }
+
+/** event_msg payload.type values that only occur while Codex is actively producing a turn. */
+const CODEX_WORK_EVENTS = new Set([
+  "agent_message",
+  "agent_reasoning",
+  "reasoning",
+  "token_count",
+  "exec_command_begin",
+  "exec_command_end",
+  "patch_apply_begin",
+  "patch_apply_end",
+  "mcp_tool_call_begin",
+  "mcp_tool_call_end",
+  "web_search_begin",
+  "web_search_end",
+]);
 
 export function hookEventState(event: string): SessionState {
   switch (event) {
@@ -327,6 +349,7 @@ interface ParsedCodex {
   workspace?: string;
   startedAt?: string;
   lastTurnMarker: "task_started" | "task_complete" | "turn_aborted" | null;
+  hasWorkEvents: boolean;
   lastEventAtMs: number;
   lastKind?: string;
 }
@@ -428,7 +451,7 @@ function scanCodexSessions(now: Date): AgentSessionSummary[] {
       id: p.id,
       agent: "codex",
       surface: p.surface,
-      state: codexSessionState({ lastTurnMarker: p.lastTurnMarker, lastEventAt: p.lastEventAtMs, now: nowMs }),
+      state: codexSessionState({ lastTurnMarker: p.lastTurnMarker, hasWorkEvents: p.hasWorkEvents, lastEventAt: p.lastEventAtMs, now: nowMs }),
       workspace: p.workspace,
       title: titles.get(p.id) ?? labelFromWorkspace(p.workspace),
       startedAt: p.startedAt,
@@ -447,6 +470,7 @@ function parseCodexFile(file: FileEntry): ParsedCodex | null {
   const meta = head?.type === "session_meta" ? (head.payload as Record<string, unknown>) : undefined;
   const tail = parseJsonl(readTail(file.path, TAIL_BYTES));
   let lastTurnMarker: "task_started" | "task_complete" | "turn_aborted" | null = null;
+  let hasWorkEvents = false;
   let lastTsMs = file.mtimeMs;
   let lastKind: string | undefined;
   for (const line of tail) {
@@ -454,6 +478,7 @@ function parseCodexFile(file: FileEntry): ParsedCodex | null {
     const kind = line.type === "event_msg" && typeof payloadType === "string" ? payloadType : line.type;
     if (typeof kind === "string") lastKind = kind;
     if (kind === "task_started" || kind === "task_complete" || kind === "turn_aborted") lastTurnMarker = kind;
+    if (line.type === "event_msg" && typeof payloadType === "string" && CODEX_WORK_EVENTS.has(payloadType)) hasWorkEvents = true;
     const ts = typeof line.timestamp === "string" ? Date.parse(line.timestamp) : NaN;
     if (Number.isFinite(ts)) lastTsMs = Math.max(lastTsMs, ts);
   }
@@ -466,6 +491,7 @@ function parseCodexFile(file: FileEntry): ParsedCodex | null {
     workspace: typeof meta?.cwd === "string" ? (meta.cwd as string) : undefined,
     startedAt: typeof meta?.timestamp === "string" ? (meta.timestamp as string) : undefined,
     lastTurnMarker,
+    hasWorkEvents,
     lastEventAtMs: lastTsMs,
     lastKind,
   };

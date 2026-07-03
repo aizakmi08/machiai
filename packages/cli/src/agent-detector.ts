@@ -231,6 +231,11 @@ function classifyActiveAppActivity(processes: ProcessSnapshot[]): AppActivityMat
   for (const process of processes) {
     const agent = agentAppName(process.commandLine);
     if (!agent || isBackgroundOnlyAgentAppProcess(process.commandLine)) continue;
+    // Claude and Codex report their real state via transcripts + hooks. Their desktop-app CPU is just
+    // launch/render noise — opening the app (with no session yet) spikes CPU well past these thresholds,
+    // which used to fake "running". Never treat their CPU as work; only untracked agents (e.g. Cursor)
+    // fall back to the CPU heuristic here.
+    if (agent === "Codex" || agent === "Claude") continue;
     const cpu = process.cpuPercent ?? 0;
     if (cpu <= 0) continue;
     const current = totals.get(agent) ?? { totalCpu: 0, maxCpu: 0, appServerCpu: 0 };
