@@ -51,7 +51,7 @@ footer {
 
 .topbar {
   position: relative;
-  justify-content: space-between;
+  justify-content: center;
   padding-left: 0;
 }
 
@@ -139,6 +139,7 @@ footer {
 
 .statusChip {
   -webkit-app-region: no-drag;
+  margin-right: auto;
   height: 23px;
   display: inline-flex;
   align-items: center;
@@ -401,7 +402,6 @@ footer {
   -webkit-app-region: no-drag;
   height: 23px;
   min-width: 28px;
-  margin-left: auto;
   padding: 0 8px;
   border: 1px solid #2f2f2f;
   border-radius: 999px;
