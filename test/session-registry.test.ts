@@ -18,9 +18,9 @@ const ago = (ms: number) => new Date(nowMs - ms).toISOString();
 
 test("claude state: mid-turn is running, finished turn goes idle after quiet, unknown uses recency", () => {
   assert.equal(claudeSessionState({ active: true, lastEventAt: nowMs - 90_000, now: nowMs }), "running");
-  // A finished reply still churning (end_turn between tool batches) stays running; once quiet -> idle.
-  assert.equal(claudeSessionState({ active: false, lastEventAt: nowMs - 2_000, now: nowMs }), "running");
-  assert.equal(claudeSessionState({ active: false, lastEventAt: nowMs - 30_000, now: nowMs }), "idle");
+  // A finished reply flips to idle quickly (short grace only), instead of lingering as "running".
+  assert.equal(claudeSessionState({ active: false, lastEventAt: nowMs - 1_000, now: nowMs }), "running");
+  assert.equal(claudeSessionState({ active: false, lastEventAt: nowMs - 5_000, now: nowMs }), "idle");
   assert.equal(claudeSessionState({ active: undefined, lastEventAt: nowMs - 5_000, now: nowMs }), "running");
   assert.equal(claudeSessionState({ active: undefined, lastEventAt: nowMs - 120_000, now: nowMs }), "idle");
   // A turn that looks in-progress but has been silent for many minutes is treated as abandoned.

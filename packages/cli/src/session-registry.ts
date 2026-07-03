@@ -17,11 +17,12 @@ export const REGISTRY_LOOKBACK_MS = 6 * 60 * 60 * 1000;
 /** With no decisive turn marker, activity newer than this still counts as running. */
 export const RUNNING_GRACE_MS = 30_000;
 /**
- * A finished-turn marker (`end_turn`) is only trusted after the session goes quiet this long.
- * A working agent keeps appending within seconds; a truly-waiting one stops. This debounces the
- * flicker where `end_turn` briefly surfaces between an agent's tool batches. Hooks (Stop) are exact.
+ * Grace after a finished-turn marker (`end_turn`) before reporting idle. In normal Claude Code
+ * `end_turn` genuinely ends the turn, so this is kept short — just enough to bridge the ~2s poll
+ * and any tail-read race, not a long "still running" tail after the agent has actually stopped.
+ * Hooks (Stop) remain the exact signal when enabled.
  */
-export const END_TURN_QUIET_MS = 12_000;
+export const END_TURN_QUIET_MS = 2_000;
 /** A transcript that looks mid-turn but has gone quiet this long is treated as abandoned. */
 export const TRANSCRIPT_RUNNING_TTL_MS = 5 * 60 * 1000;
 /** A hook "running" state with no Stop for this long is a crash backstop -> idle. */

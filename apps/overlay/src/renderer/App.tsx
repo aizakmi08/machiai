@@ -1220,7 +1220,7 @@ function formatClock(ms: number): string {
 function detectionHeadline(detection: AgentDetection | undefined): string {
   if (!detection) return "checking…";
   if (detection.status === "active") return `${detection.agent ?? "agent"} running`;
-  if (detection.status === "maybe") return "agent idle";
+  if (detection.status === "maybe") return `${detection.agent ?? "agent"} idle`;
   return "no agent";
 }
 
