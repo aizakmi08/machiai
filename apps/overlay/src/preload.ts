@@ -15,6 +15,7 @@ export interface MachiaiOverlayApi {
   saveProfile(profile: PlayerProfile): Promise<PlayerProfile>;
   openExternal(url: string): Promise<void>;
   snap(): Promise<SnapResult>;
+  attention(): Promise<void>;
 }
 
 const api: MachiaiOverlayApi = {
@@ -30,6 +31,7 @@ const api: MachiaiOverlayApi = {
   saveProfile: (profile: PlayerProfile) => ipcRenderer.invoke("machiai:save-profile", profile) as Promise<PlayerProfile>,
   openExternal: (url: string) => ipcRenderer.invoke("machiai:open-external", url) as Promise<void>,
   snap: () => ipcRenderer.invoke("machiai:snap") as Promise<SnapResult>,
+  attention: () => ipcRenderer.invoke("machiai:attention") as Promise<void>,
 };
 
 contextBridge.exposeInMainWorld("machiaiOverlay", api);

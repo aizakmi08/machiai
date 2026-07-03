@@ -2,12 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Chess, type Square } from "chess.js";
 import { io, type Socket } from "socket.io-client";
 import { isTwitterAuthenticated, normalizeTwitterHandle, twitterDisplayName, twitterUrl } from "../../../../packages/shared/src/profile.js";
+import { sounds } from "./sound.js";
 import type {
   AgentDetection,
   AgentSessionSummary,
   Color,
   GameState,
   MachiaiError,
+  MoveRecord,
   MatchRecord,
   OverlayBootstrap,
   PlayerProfile,
@@ -78,6 +80,9 @@ export function App() {
   const [reaction, setReaction] = useState<ReactionMessage | undefined>();
   const [matchFound, setMatchFound] = useState(false);
   const [signingIn, setSigningIn] = useState(false);
+  const [pendingPromotion, setPendingPromotion] = useState<{ from: string; to: string; premove: boolean } | undefined>();
+  const [muted, setMuted] = useState(sounds.isMuted());
+  const prevMoveCountRef = useRef(0);
   const [xLoginUrl, setXLoginUrl] = useState<string | undefined>();
   const [showDetection, setShowDetection] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
@@ -226,6 +231,8 @@ export function App() {
         setReaction(undefined);
         setMatchFound(true);
         window.setTimeout(() => setMatchFound(false), 1600);
+        sounds.gameFound();
+        void window.machiaiOverlay.attention().catch(() => {});
         setMessage(nextGame.mode === "bot" ? "Practice bot found. No MMR change." : "Game found.");
       });
       socket.on("game.state", (nextGame: GameState) => {
@@ -332,6 +339,42 @@ export function App() {
   const resultTone = game?.status === "ended" ? resultForPlayerColor(game, playerColor) : "none";
   const lastMoveLabel = lastMove ? `${lastMove.color === playerColor ? "You" : "Last"}: ${lastMove.san}` : "";
   const pendingPremoveLabel = premove ? `Premove: ${premove.from}-${premove.to}` : "";
+
+  const captured = useMemo(() => capturedFromGame(game?.moves), [game?.moves]);
+  const topColor: Color = playerColor === "white" ? "black" : "white";
+  const topTaken = game ? (topColor === "white" ? captured.byWhite : captured.byBlack) : [];
+  const bottomTaken = game ? (playerColor === "white" ? captured.byWhite : captured.byBlack) : [];
+  const topAdvantage = game ? (topColor === "white" ? captured.diff : -captured.diff) : 0;
+  const bottomAdvantage = game ? (playerColor === "white" ? captured.diff : -captured.diff) : 0;
+
+  const checkSquare = useMemo(() => {
+    if (!game || game.status !== "active") return undefined;
+    try {
+      if (!new Chess(game.fen).inCheck()) return undefined;
+      const kingChar = game.turn === "white" ? "K" : "k";
+      for (const [square, piece] of board) {
+        if (piece === kingChar) return square;
+      }
+    } catch {
+      return undefined;
+    }
+    return undefined;
+  }, [game?.fen, game?.status, game?.turn, board]);
+
+  // Move/capture sounds fire when the move list grows (covers our moves, opponent moves, and premoves).
+  useEffect(() => {
+    const count = game?.moves.length ?? 0;
+    if (count > prevMoveCountRef.current && game?.status === "active") {
+      const san = game.moves.at(-1)?.san ?? "";
+      if (san.includes("x")) sounds.capture();
+      else sounds.move();
+    }
+    prevMoveCountRef.current = count;
+  }, [game?.moves.length, game?.status]);
+
+  useEffect(() => {
+    if (resultTone === "win" || resultTone === "loss" || resultTone === "draw") sounds.gameEnd(resultTone);
+  }, [resultTone, game?.gameId]);
   // A recently-set message (errors, "Finding…", results, sign-in prompts) must win over the ambient
   // detection hint — otherwise feedback like an auth rejection is silently overwritten and Start "does nothing".
   const messageFresh = message !== "" && message !== "Opening Machiai." && Date.now() - messageAtRef.current < 6000;
@@ -364,7 +407,7 @@ export function App() {
       setMessage("Premove cancelled.");
       return;
     }
-    void makeMove(next.from, next.to);
+    void makeMove(next.from, next.to, next.promotion || undefined);
   }, [game?.fen, game?.status, game?.turn, movePending, playerColor, premove]);
 
   async function joinQueue() {
@@ -500,12 +543,17 @@ export function App() {
     }
   }
 
-  async function makeMove(from: string, to: string) {
+  async function makeMove(from: string, to: string, promotion?: string) {
     const socket = socketRef.current;
     if (!socket || !game || !profile || game.status !== "active" || game.turn !== playerColor || movePending) return;
     const piece = board.get(from);
-    const promotion = piece?.toLowerCase() === "p" && (to.endsWith("8") || to.endsWith("1")) ? "q" : "";
-    const moveInput = `${from}${to}${promotion}`;
+    const needsPromotion = piece?.toLowerCase() === "p" && (to.endsWith("8") || to.endsWith("1"));
+    if (needsPromotion && !promotion) {
+      // Let the player choose the piece instead of silently auto-queening.
+      setPendingPromotion({ from, to, premove: false });
+      return;
+    }
+    const moveInput = `${from}${to}${needsPromotion ? promotion : ""}`;
     const previousGame = game;
     const optimistic = previewMove(game, profile.playerId, moveInput);
     if (!optimistic) {
@@ -579,8 +627,12 @@ export function App() {
     }
     if (canPlanPremove && legalTargets.has(square)) {
       const selectedPiece = board.get(selected);
-      const promotion = selectedPiece?.toLowerCase() === "p" && (square.endsWith("8") || square.endsWith("1")) ? "q" : "";
-      setPremove({ from: selected, to: square, promotion });
+      if (selectedPiece?.toLowerCase() === "p" && (square.endsWith("8") || square.endsWith("1"))) {
+        setPendingPromotion({ from: selected, to: square, premove: true });
+        setSelected(undefined);
+        return;
+      }
+      setPremove({ from: selected, to: square, promotion: "" });
       setSelected(undefined);
       setMessage(`Premove set: ${selected}-${square}.`);
     }
@@ -594,10 +646,26 @@ export function App() {
     }
     if (!canPlanPremove || !isOwnPiece(board.get(from), playerColor) || !legalMovesFor(game.fen, from, true, playerColor).has(to)) return;
     const piece = board.get(from);
-    const promotion = piece?.toLowerCase() === "p" && (to.endsWith("8") || to.endsWith("1")) ? "q" : "";
-    setPremove({ from, to, promotion });
+    if (piece?.toLowerCase() === "p" && (to.endsWith("8") || to.endsWith("1"))) {
+      setPendingPromotion({ from, to, premove: true });
+      setSelected(undefined);
+      return;
+    }
+    setPremove({ from, to, promotion: "" });
     setSelected(undefined);
     setMessage(`Premove set: ${from}-${to}.`);
+  }
+
+  function choosePromotion(promotion: string) {
+    const pending = pendingPromotion;
+    setPendingPromotion(undefined);
+    if (!pending) return;
+    if (pending.premove) {
+      setPremove({ from: pending.from, to: pending.to, promotion });
+      setMessage(`Premove set: ${pending.from}-${pending.to}=${promotion.toUpperCase()}.`);
+      return;
+    }
+    void makeMove(pending.from, pending.to, promotion);
   }
 
   return (
@@ -639,6 +707,15 @@ export function App() {
           <span className="caret">▾</span>
         </button>
         <span className={`pill ${connection}`}>{connectionLabel(connection, serverHost)}</span>
+        <button
+          type="button"
+          className={`soundBtn ${muted ? "muted" : ""}`}
+          onClick={() => setMuted(sounds.toggleMute())}
+          title={muted ? "Unmute sounds" : "Mute sounds"}
+          aria-pressed={muted}
+        >
+          ♪
+        </button>
       </section>
 
       {showDetection ? (
@@ -763,21 +840,40 @@ export function App() {
                     @{topTwitter}
                   </button>
                 ) : null}
+                {topTaken.length > 0 || topAdvantage > 0 ? (
+                  <span className="captured" aria-label="Pieces captured by opponent">
+                    {topTaken.map((type, i) => (
+                      <i key={`${type}${i}`}>{PIECES[type]}</i>
+                    ))}
+                    {topAdvantage > 0 ? <b>+{topAdvantage}</b> : null}
+                  </span>
+                ) : null}
               </span>
               <strong>{formatClock(liveClock(game, playerColor === "white" ? "black" : "white", topClock))}</strong>
             </section>
 
-            <section className={`board ${movePending ? "pending" : ""}`} aria-label="Chess board">
-              {squares.map((square) => {
+            <section className={`board ${movePending ? "pending" : ""} ${matchFound ? "shake" : ""}`} aria-label="Chess board">
+              {squares.map((square, index) => {
                 const piece = board.get(square);
                 const isSelected = selected === square;
                 const isLegal = legalTargets.has(square);
                 const isLastMove = square === lastMove?.from || square === lastMove?.to;
                 const isPremove = square === premove?.from || square === premove?.to;
+                const classes = [
+                  "square",
+                  squareShade(square),
+                  isSelected ? "selected" : "",
+                  isLegal ? (piece ? "legalCapture" : "legalMove") : "",
+                  isLastMove ? "lastMove" : "",
+                  isPremove ? "premove" : "",
+                  square === checkSquare ? "inCheck" : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ");
                 return (
                   <button
                     key={square}
-                    className={`square ${squareShade(square)} ${isSelected ? "selected" : ""} ${isLegal ? "legalMove" : ""} ${isLastMove ? "lastMove" : ""} ${isPremove ? "premove" : ""}`}
+                    className={classes}
                     onClick={() => onSquareClick(square)}
                     onDragOver={(event) => event.preventDefault()}
                     onDrop={(event) => {
@@ -786,6 +882,8 @@ export function App() {
                       onSquareDrop(from, square);
                     }}
                   >
+                    {index % 8 === 0 ? <span className="coord rank">{square[1]}</span> : null}
+                    {index >= 56 ? <span className="coord file">{square[0]}</span> : null}
                     <span
                       className={`piece ${pieceColor(piece) ?? ""}`}
                       draggable={(canMoveNow || canPlanPremove) && isOwnPiece(piece, playerColor)}
@@ -799,6 +897,23 @@ export function App() {
               {resultTone !== "none" ? <div className={`resultBurst ${resultTone}`}>{resultTone}</div> : null}
               {matchFound ? <div className="matchFound">Game found</div> : null}
               {reaction ? <div className="reactionFlash">{reaction.reaction}</div> : null}
+              {pendingPromotion ? (
+                <div
+                  className="promoOverlay"
+                  onClick={() => {
+                    setPendingPromotion(undefined);
+                    setMessage("Promotion cancelled.");
+                  }}
+                >
+                  <div className="promoBox" onClick={(event) => event.stopPropagation()} role="dialog" aria-label="Choose promotion piece">
+                    {["q", "r", "b", "n"].map((option) => (
+                      <button key={option} type="button" className="promoChoice" onClick={() => choosePromotion(option)} aria-label={`Promote to ${option}`}>
+                        {PIECES[option]}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
             </section>
 
             <section className="playerRow bottom">
@@ -843,6 +958,14 @@ export function App() {
                   <span>{bottomPlayer}</span>
                   {bottomMmr ? <em>{bottomMmr} MMR</em> : null}
                   {showBottomTwitter ? <em>@{bottomTwitter}</em> : null}
+                  {bottomTaken.length > 0 || bottomAdvantage > 0 ? (
+                    <span className="captured" aria-label="Pieces you captured">
+                      {bottomTaken.map((type, i) => (
+                        <i key={`${type}${i}`}>{PIECES[type]}</i>
+                      ))}
+                      {bottomAdvantage > 0 ? <b>+{bottomAdvantage}</b> : null}
+                    </span>
+                  ) : null}
                   {!signedIn ? (
                     <button type="button" onClick={() => setEditingName(true)}>
                       Edit
@@ -1031,6 +1154,48 @@ function pieceColor(piece?: string): Color | undefined {
 
 function isOwnPiece(piece: string | undefined, color: Color): boolean {
   return pieceColor(piece) === color;
+}
+
+const PIECE_POINTS: Record<string, number> = { p: 1, n: 3, b: 3, r: 5, q: 9 };
+const PIECE_ORDER: Record<string, number> = { p: 0, n: 1, b: 2, r: 3, q: 4 };
+
+/**
+ * Chess.com-style capture tally derived by replaying the SAN move list from the start
+ * position. Neither the position snapshot (promotions skew piece counts) nor game.pgn
+ * (the server rebuilds from FEN, so pgn only holds the last move) can answer this.
+ * diff is the true material edge: captured points plus promotion gains, positive = white ahead.
+ */
+function capturedFromGame(moves: MoveRecord[] | undefined): { byWhite: string[]; byBlack: string[]; diff: number } {
+  const empty = { byWhite: [] as string[], byBlack: [] as string[], diff: 0 };
+  if (!moves || moves.length === 0) return empty;
+  const chess = new Chess();
+  try {
+    for (const record of moves) chess.move(record.san);
+  } catch {
+    // tolerate a partial replay; count what parsed
+  }
+  const byWhite: string[] = [];
+  const byBlack: string[] = [];
+  let diff = 0;
+  for (const move of chess.history({ verbose: true })) {
+    if (move.captured) {
+      const points = PIECE_POINTS[move.captured] ?? 0;
+      if (move.color === "w") {
+        byWhite.push(move.captured);
+        diff += points;
+      } else {
+        byBlack.push(move.captured);
+        diff -= points;
+      }
+    }
+    if (move.promotion) {
+      const gain = (PIECE_POINTS[move.promotion] ?? 1) - 1;
+      diff += move.color === "w" ? gain : -gain;
+    }
+  }
+  byWhite.sort((a, b) => (PIECE_ORDER[a] ?? 9) - (PIECE_ORDER[b] ?? 9));
+  byBlack.sort((a, b) => (PIECE_ORDER[a] ?? 9) - (PIECE_ORDER[b] ?? 9));
+  return { byWhite, byBlack, diff };
 }
 
 function squareShade(square: string): "light" | "dark" {

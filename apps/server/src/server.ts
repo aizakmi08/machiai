@@ -68,6 +68,7 @@ export class MachiaiServer {
   private readonly finalizedRatings = new Set<string>();
   private readonly socketsByPlayer = new Map<string, Set<string>>();
   private readonly disconnectTimers = new Map<string, NodeJS.Timeout>();
+  private queueSweepTimer: NodeJS.Timeout | undefined;
   private readonly botTimers = new Map<string, NodeJS.Timeout>();
   private readonly botMoveTimers = new Map<string, NodeJS.Timeout>();
   private readonly gameTimeoutTimers = new Map<string, NodeJS.Timeout>();
@@ -93,12 +94,19 @@ export class MachiaiServer {
     this.store = this.options.store ?? (await createStore(this.options.storePath));
     await this.configureRedisAdapter();
     this.registerSocketHandlers();
+    // The match window widens with queue wait time, so waiting players must be re-evaluated
+    // periodically — not only on queue.join — or a >100 MMR pair never matches.
+    this.queueSweepTimer = setInterval(() => {
+      if (this.queue.length >= 2) void this.tryMatch();
+    }, 2000);
+    this.queueSweepTimer.unref?.();
     await new Promise<void>((resolve) => this.http.listen(port, host, resolve));
     const address = this.http.address() as AddressInfo;
     return `http://${address.address}:${address.port}`;
   }
 
   async stop(): Promise<void> {
+    if (this.queueSweepTimer) clearInterval(this.queueSweepTimer);
     for (const timer of this.botTimers.values()) clearTimeout(timer);
     for (const timer of this.botMoveTimers.values()) clearTimeout(timer);
     for (const timer of this.gameTimeoutTimers.values()) clearTimeout(timer);

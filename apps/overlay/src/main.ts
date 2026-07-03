@@ -129,6 +129,14 @@ function registerIpc(): void {
     await shell.openExternal(url, { activate: true });
   });
   ipcMain.handle("machiai:snap", async (): Promise<SnapResult> => snapWindow());
+  ipcMain.handle("machiai:attention", () => {
+    if (process.platform !== "darwin") return;
+    try {
+      app.dock?.bounce("informational");
+    } catch {
+      // dock may be unavailable (hidden dock, agent mode)
+    }
+  });
 }
 
 async function snapWindow(): Promise<SnapResult> {
