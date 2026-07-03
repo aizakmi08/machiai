@@ -77,6 +77,7 @@ export function App() {
   const [presence, setPresence] = useState<PresenceState | undefined>();
   const [chatInput, setChatInput] = useState("");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatFlash, setChatFlash] = useState<ChatMessage | undefined>();
   const [reaction, setReaction] = useState<ReactionMessage | undefined>();
   const [matchFound, setMatchFound] = useState(false);
   const [signingIn, setSigningIn] = useState(false);
@@ -278,6 +279,10 @@ export function App() {
       });
       socket.on("chat.received", (payload: ChatMessage) => {
         setChatMessages((items) => [...items.slice(-3), payload]);
+        // The chat log is hidden on the narrow overlay, so surface every message as a brief bubble
+        // over the board — otherwise players never see "gg" etc.
+        setChatFlash(payload);
+        window.setTimeout(() => setChatFlash((current) => (current?.createdAt === payload.createdAt ? undefined : current)), 4200);
       });
       socket.on("error", (error: MachiaiError) => setMessage(error.message));
     });
@@ -322,7 +327,9 @@ export function App() {
   const bottomTwitter = game ? (playerColor === "white" ? game.whiteTwitterHandle : game.blackTwitterHandle) : profile?.twitterHandle;
   const showBottomTwitter = bottomTwitter && bottomPlayer !== `@${bottomTwitter}`;
   const topMmr = game ? (playerColor === "white" ? game.blackMmr : game.whiteMmr) : undefined;
-  const bottomMmr = game ? (playerColor === "white" ? game.whiteMmr : game.blackMmr) : profile?.mmr;
+  // During an active game show the game's snapshot; otherwise show the live profile MMR so it
+  // reflects the rating change the moment the game ends.
+  const bottomMmr = game && game.status === "active" ? (playerColor === "white" ? game.whiteMmr : game.blackMmr) : profile?.mmr;
   const topClock = game ? (playerColor === "white" ? game.clocks.blackMs : game.clocks.whiteMs) : 3 * 60 * 1000;
   const bottomClock = game ? (playerColor === "white" ? game.clocks.whiteMs : game.clocks.blackMs) : 3 * 60 * 1000;
   const serverHost = bootstrap ? new URL(bootstrap.serverUrl).host : "server";
@@ -811,7 +818,18 @@ export function App() {
                 {matches.map((match) => (
                   <div key={match.gameId} className="matchRow">
                     <span className={`resultTag ${match.result}`}>{match.result === "win" ? "W" : match.result === "loss" ? "L" : "D"}</span>
-                    <span className="matchOpp">{match.opponentTwitter ? `@${match.opponentTwitter}` : match.opponentHandle}</span>
+                    {match.opponentTwitter ? (
+                      <button
+                        type="button"
+                        className="matchOpp matchOppLink"
+                        title={`Open @${match.opponentTwitter} on X`}
+                        onClick={() => void openTwitter(match.opponentTwitter)}
+                      >
+                        @{match.opponentTwitter}
+                      </button>
+                    ) : (
+                      <span className="matchOpp">{match.opponentHandle}</span>
+                    )}
                     <span className="matchDelta">{matchDeltaLabel(match)}</span>
                     <span className="matchAge">{timeAgo(match.playedAt)}</span>
                   </div>
@@ -897,6 +915,12 @@ export function App() {
               {resultTone !== "none" ? <div className={`resultBurst ${resultTone}`}>{resultTone}</div> : null}
               {matchFound ? <div className="matchFound">Game found</div> : null}
               {reaction ? <div className="reactionFlash">{reaction.reaction}</div> : null}
+              {chatFlash ? (
+                <div className="chatFlash">
+                  <b>{chatFlash.playerId === profile?.playerId ? "You" : chatFlash.handle}</b>
+                  {chatFlash.message}
+                </div>
+              ) : null}
               {pendingPromotion ? (
                 <div
                   className="promoOverlay"
@@ -957,6 +981,9 @@ export function App() {
                 <span className="nameWithEdit">
                   <span>{bottomPlayer}</span>
                   {bottomMmr ? <em>{bottomMmr} MMR</em> : null}
+                  {ratingDelta !== undefined && game?.status === "ended" ? (
+                    <em className={`mmrDelta ${ratingDelta >= 0 ? "up" : "down"}`}>{ratingDelta > 0 ? `+${ratingDelta}` : ratingDelta}</em>
+                  ) : null}
                   {showBottomTwitter ? <em>@{bottomTwitter}</em> : null}
                   {bottomTaken.length > 0 || bottomAdvantage > 0 ? (
                     <span className="captured" aria-label="Pieces you captured">

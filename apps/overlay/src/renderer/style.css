@@ -529,6 +529,23 @@ footer {
   font-weight: 650;
 }
 
+.matchOppLink {
+  -webkit-app-region: no-drag;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: #fff;
+  font: inherit;
+  font-weight: 650;
+  text-align: left;
+  cursor: pointer;
+}
+
+.matchOppLink:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 .matchDelta {
   flex: 0 0 auto;
   color: #9a9a9a;
@@ -585,6 +602,19 @@ footer {
   font-style: normal;
   font-weight: 750;
   white-space: nowrap;
+}
+
+.mmrDelta {
+  font-weight: 850;
+  font-variant-numeric: tabular-nums;
+}
+
+.mmrDelta.up {
+  color: #fff;
+}
+
+.mmrDelta.down {
+  color: #8f8f8f;
 }
 
 .playerNameLink {
@@ -965,6 +995,49 @@ footer {
 .reactionFlash {
   font-size: 52px;
   animation: reaction-pop 1200ms ease both;
+}
+
+.chatFlash {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  z-index: 4;
+  max-width: 88%;
+  padding: 7px 12px;
+  border: 1px solid #000;
+  border-radius: 12px;
+  color: #000;
+  background: #fff;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.25;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+  animation: chat-flash 4200ms ease both;
+}
+
+.chatFlash b {
+  margin-right: 5px;
+  font-weight: 850;
+}
+
+@keyframes chat-flash {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 8px);
+  }
+  6% {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+  88% {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -4px);
+  }
 }
 
 .sideRail {
