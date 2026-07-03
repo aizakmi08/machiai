@@ -51,7 +51,7 @@ footer {
 
 .topbar {
   position: relative;
-  justify-content: center;
+  justify-content: space-between;
   padding-left: 0;
 }
 

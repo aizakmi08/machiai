@@ -671,20 +671,20 @@ export function App() {
   return (
     <main className="shell">
       <header className="topbar">
+        <button
+          type="button"
+          className={`histBtn ${showHistory ? "open" : ""}`}
+          onClick={() => {
+            setShowHistory((value) => !value);
+            setShowDetection(false);
+          }}
+          title="Match history"
+          aria-expanded={showHistory}
+        >
+          Games
+        </button>
         <strong>Machiai</strong>
         <div className="topActions">
-          <button
-            type="button"
-            className={`histBtn ${showHistory ? "open" : ""}`}
-            onClick={() => {
-              setShowHistory((value) => !value);
-              setShowDetection(false);
-            }}
-            title="Match history"
-            aria-expanded={showHistory}
-          >
-            Games
-          </button>
           <span className="onlineCount" aria-label={`${presence?.onlinePlayers ?? 0} players online`}>
             {formatOnlineCount(presence?.onlinePlayers, connection)}
           </span>
