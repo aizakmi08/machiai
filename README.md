@@ -1,5 +1,7 @@
 # Machiai
 
+[![CI](https://github.com/aizakmi08/machiai/actions/workflows/ci.yml/badge.svg)](https://github.com/aizakmi08/machiai/actions/workflows/ci.yml)
+
 Chess for people waiting on AI agents.
 
 Machiai is a floating chess overlay for Codex, Claude, Cursor, and other coding agents. Open the square window, keep it beside your agent app, and play 3+0 chess only while an agent is running.
@@ -243,6 +245,12 @@ Release gate:
 ```bash
 pnpm release:check
 ```
+
+## Quality Signals
+
+- CI runs typechecking, build, and the Node test suite on pushes and pull requests.
+- `pnpm release:check` combines typecheck, build, tests, smoke flow, dry-run publish, and package packing.
+- `CONTRIBUTING.md` and `SECURITY.md` document the expected project quality and security posture.
 
 ## Launch Copy
 
